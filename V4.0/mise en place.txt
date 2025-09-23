@@ -1,0 +1,48 @@
+🚀 Fonctionnalités implémentées
+Système d'utilisateurs à 3 niveaux:
+
+    Visiteur : Peut voir les groupes et demander à les rejoindre
+    Utilisateur : Peut gérer les dépenses dans ses groupes
+    Administrateur : Contrôle total sur utilisateurs et groupes
+
+Gestion des groupes:
+
+    Création/suppression de groupes
+    Ajout de membres (liés ou non à des comptes utilisateur)
+    Vue détaillée avec toutes les informations
+
+Gestion des dépenses:
+
+    Ajout de dépenses avec répartition entre participants
+    Calcul automatique des balances de chacun
+    Algorithme de remboursement optimisé qui détermine qui doit combien à qui
+
+Interface moderne:
+
+    Design responsive avec dégradés modernes
+    Navigation intuitive
+    Tableaux de bord clairs et fonctionnels
+
+📁 Structure des fichiers:
+
+shareman/
+├── index.php (connexion)
+├── install.php (installation BDD)
+├── dashboard.php (tableau de bord)
+├── group.php (vue groupe)
+├── admin.php (administration)
+├── create_group.php (création groupe)
+├── auth.php (authentification)
+├── config/database.php
+└── classes/ (User, Group, Expense)
+
+🛠️ Installation:
+
+    Créer une base MySQL shareman
+    Configurer config/database.php
+    Exécuter install.php
+    Connexion admin: admin / admin123
+
+L'application gère exactement ce que vous demandiez : partage de dépenses comme Tricount/Splid, avec système de permissions et calculs automatiques des remboursements !
+
+

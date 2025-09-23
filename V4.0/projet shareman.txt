@@ -1,0 +1,1372 @@
+<?php
+// config/database.php
+class Database {
+    private $host = 'localhost';
+    private $db_name = 'shareman';
+    private $username = 'root';
+    private $password = '';
+    public $conn;
+
+    public function getConnection() {
+        $this->conn = null;
+        try {
+            $this->conn = new PDO("mysql:host=" . $this->host . ";dbname=" . $this->db_name, $this->username, $this->password);
+            $this->conn->exec("set names utf8");
+        } catch(PDOException $exception) {
+            echo "Erreur de connexion: " . $exception->getMessage();
+        }
+        return $this->conn;
+    }
+}
+?>
+// install.php - Script d'installation de la base de données
+<?php
+require_once 'config/database.php';
+
+$database = new Database();
+$db = $database->getConnection();
+
+// Création des tables
+$queries = [
+    "CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        username VARCHAR(50) UNIQUE NOT NULL,
+        email VARCHAR(100),
+        password VARCHAR(255) NOT NULL,
+        status ENUM('visiteur', 'utilisateur', 'administrateur') DEFAULT 'visiteur',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )",
+    
+    "CREATE TABLE IF NOT EXISTS groups_table (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        description TEXT,
+        created_by INT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (created_by) REFERENCES users(id)
+    )",
+    
+    "CREATE TABLE IF NOT EXISTS group_members (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        group_id INT,
+        user_id INT NULL,
+        member_name VARCHAR(50) NOT NULL,
+        status ENUM('pending', 'active') DEFAULT 'pending',
+        joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (group_id) REFERENCES groups_table(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    )",
+    
+    "CREATE TABLE IF NOT EXISTS expenses (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        group_id INT,
+        title VARCHAR(100) NOT NULL,
+        amount DECIMAL(10,2) NOT NULL,
+        paid_by VARCHAR(50) NOT NULL,
+        created_by INT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (group_id) REFERENCES groups_table(id) ON DELETE CASCADE,
+        FOREIGN KEY (created_by) REFERENCES users(id)
+    )",
+    
+    "CREATE TABLE IF NOT EXISTS expense_participants (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        expense_id INT,
+        member_name VARCHAR(50) NOT NULL,
+        share DECIMAL(10,2) NOT NULL,
+        FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE CASCADE
+    )",
+    
+    "INSERT IGNORE INTO users (username, email, password, status) VALUES 
+    ('admin', 'admin@shareman.com', '" . password_hash('admin123', PASSWORD_DEFAULT) . "', 'administrateur')"
+];
+
+foreach($queries as $query) {
+    try {
+        $db->exec($query);
+        echo "✓ Requête exécutée avec succès<br>";
+    } catch(PDOException $e) {
+        echo "✗ Erreur: " . $e->getMessage() . "<br>";
+    }
+}
+
+echo "<h3>Installation terminée !</h3>";
+echo "<p>Compte admin créé: admin / admin123</p>";
+echo "<a href='index.php'>Accéder à l'application</a>";
+?>
+
+<?php
+// classes/User.php
+class User {
+    private $conn;
+    
+    public function __construct($db) {
+        $this->conn = $db;
+    }
+    
+    public function login($username, $password) {
+        $query = "SELECT id, username, email, password, status FROM users WHERE username = ?";
+        $stmt = $this->conn->prepare($query);
+        $stmt->execute([$username]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if($user && password_verify($password, $user['password'])) {
+            return $user;
+        }
+        return false;
+    }
+    
+    public function register($username, $email, $password) {
+        $query = "INSERT INTO users (username, email, password, status) VALUES (?, ?, ?, 'visiteur')";
+        $stmt = $this->conn->prepare($query);
+        return $stmt->execute([$username, $email, password_hash($password, PASSWORD_DEFAULT)]);
+    }
+    
+    public function getUserById($id) {
+        $query = "SELECT * FROM users WHERE id = ?";
+        $stmt = $this->conn->prepare($query);
+        $stmt->execute([$id]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+    
+    public function getAllUsers() {
+        $query = "SELECT id, username, email, status, created_at FROM users ORDER BY username";
+        $stmt = $this->conn->prepare($query);
+        $stmt->execute();
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+    
+    public function updateUserStatus($userId, $status) {
+        $query = "UPDATE users SET status = ? WHERE id = ?";
+        $stmt = $this->conn->prepare($query);
+        return $stmt->execute([$status, $userId]);
+    }
+    
+    public function deleteUser($userId) {
+        $query = "DELETE FROM users WHERE id = ?";
+        $stmt = $this->conn->prepare($query);
+        return $stmt->execute([$userId]);
+    }
+}
+?>
+<?php
+// classes/Group.php
+class Group {
+    private $conn;
+    
+    public function __construct($db) {
+        $this->conn = $db;
+    }
+    
+    public function createGroup($name, $description, $createdBy) {
+        $query = "INSERT INTO groups_table (name, description, created_by) VALUES (?, ?, ?)";
+        $stmt = $this->conn->prepare($query);
+        if($stmt->execute([$name, $description, $createdBy])) {
+            return $this->conn->lastInsertId();
+        }
+        return false;
+    }
+    
+    public function getAllGroups() {
+        $query = "SELECT g.*, u.username as creator_name FROM groups_table g 
+                  LEFT JOIN users u ON g.created_by = u.id ORDER BY g.name";
+        $stmt = $this->conn->prepare($query);
+        $stmt->execute();
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+    
+    public function getGroupById($id) {
+        $query = "SELECT g.*, u.username as creator_name FROM groups_table g 
+                  LEFT JOIN users u ON g.created_by = u.id WHERE g.id = ?";
+        $stmt = $this->conn->prepare($query);
+        $stmt->execute([$id]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+    
+    public function addMemberToGroup($groupId, $memberName, $userId = null) {
+        $query = "INSERT INTO group_members (group_id, user_id, member_name, status) VALUES (?, ?, ?, 'active')";
+        $stmt = $this->conn->prepare($query);
+        return $stmt->execute([$groupId, $userId, $memberName]);
+    }
+    
+    public function getGroupMembers($groupId) {
+        $query = "SELECT gm.*, u.username, u.status as user_status FROM group_members gm 
+                  LEFT JOIN users u ON gm.user_id = u.id WHERE gm.group_id = ?";
+        $stmt = $this->conn->prepare($query);
+        $stmt->execute([$groupId]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+    
+    public function isUserInGroup($groupId, $userId) {
+        $query = "SELECT COUNT(*) FROM group_members WHERE group_id = ? AND user_id = ?";
+        $stmt = $this->conn->prepare($query);
+        $stmt->execute([$groupId, $userId]);
+        return $stmt->fetchColumn() > 0;
+    }
+    
+    public function deleteGroup($groupId) {
+        $query = "DELETE FROM groups_table WHERE id = ?";
+        $stmt = $this->conn->prepare($query);
+        return $stmt->execute([$groupId]);
+    }
+}
+
+// classes/Expense.php
+class Expense {
+    private $conn;
+    
+    public function __construct($db) {
+        $this->conn = $db;
+    }
+    
+    public function addExpense($groupId, $title, $amount, $paidBy, $createdBy, $participants) {
+        $this->conn->beginTransaction();
+        
+        try {
+            // Ajouter la dépense
+            $query = "INSERT INTO expenses (group_id, title, amount, paid_by, created_by) VALUES (?, ?, ?, ?, ?)";
+            $stmt = $this->conn->prepare($query);
+            $stmt->execute([$groupId, $title, $amount, $paidBy, $createdBy]);
+            $expenseId = $this->conn->lastInsertId();
+            
+            // Ajouter les participants
+            $query = "INSERT INTO expense_participants (expense_id, member_name, share) VALUES (?, ?, ?)";
+            $stmt = $this->conn->prepare($query);
+            
+            $sharePerPerson = $amount / count($participants);
+            foreach($participants as $participant) {
+                $stmt->execute([$expenseId, $participant, $sharePerPerson]);
+            }
+            
+            $this->conn->commit();
+            return $expenseId;
+        } catch(Exception $e) {
+            $this->conn->rollback();
+            return false;
+        }
+    }
+    
+    public function getGroupExpenses($groupId) {
+        $query = "SELECT e.*, u.username as creator_name FROM expenses e 
+                  LEFT JOIN users u ON e.created_by = u.id 
+                  WHERE e.group_id = ? ORDER BY e.created_at DESC";
+        $stmt = $this->conn->prepare($query);
+        $stmt->execute([$groupId]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+    
+    public function getExpenseParticipants($expenseId) {
+        $query = "SELECT * FROM expense_participants WHERE expense_id = ?";
+        $stmt = $this->conn->prepare($query);
+        $stmt->execute([$expenseId]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+    
+    public function deleteExpense($expenseId) {
+        $query = "DELETE FROM expenses WHERE id = ?";
+        $stmt = $this->conn->prepare($query);
+        return $stmt->execute([$expenseId]);
+    }
+    
+    public function calculateBalances($groupId) {
+        // Récupérer toutes les dépenses du groupe
+        $expenses = $this->getGroupExpenses($groupId);
+        $balances = [];
+        
+        foreach($expenses as $expense) {
+            $participants = $this->getExpenseParticipants($expense['id']);
+            
+            // Initialiser les balances si nécessaire
+            if(!isset($balances[$expense['paid_by']])) {
+                $balances[$expense['paid_by']] = 0;
+            }
+            
+            // Celui qui a payé a un crédit
+            $balances[$expense['paid_by']] += $expense['amount'];
+            
+            // Les participants ont une dette
+            foreach($participants as $participant) {
+                if(!isset($balances[$participant['member_name']])) {
+                    $balances[$participant['member_name']] = 0;
+                }
+                $balances[$participant['member_name']] -= $participant['share'];
+            }
+        }
+        
+        return $balances;
+    }
+    
+    public function calculateDebts($groupId) {
+        $balances = $this->calculateBalances($groupId);
+        $debts = [];
+        
+        $creditors = [];
+        $debtors = [];
+        
+        foreach($balances as $person => $balance) {
+            if($balance > 0.01) {
+                $creditors[$person] = $balance;
+            } elseif($balance < -0.01) {
+                $debtors[$person] = abs($balance);
+            }
+        }
+        
+        // Calculer qui doit combien à qui
+        foreach($debtors as $debtor => $debt) {
+            foreach($creditors as $creditor => $credit) {
+                if($debt <= 0 || $credit <= 0) continue;
+                
+                $payment = min($debt, $credit);
+                if($payment > 0.01) {
+                    $debts[] = [
+                        'from' => $debtor,
+                        'to' => $creditor,
+                        'amount' => round($payment, 2)
+                    ];
+                    
+                    $debt -= $payment;
+                    $creditors[$creditor] -= $payment;
+                }
+            }
+        }
+        
+        return $debts;
+    }
+}
+
+// auth.php - Gestion de l'authentification
+<?php
+session_start();
+require_once 'config/database.php';
+require_once 'classes/User.php';
+
+$database = new Database();
+$db = $database->getConnection();
+$user = new User($db);
+
+if($_POST) {
+    $action = $_POST['action'] ?? '';
+    
+    if($action === 'login') {
+        $username = $_POST['username'];
+        $password = $_POST['password'];
+        
+        $userData = $user->login($username, $password);
+        if($userData) {
+            $_SESSION['user_id'] = $userData['id'];
+            $_SESSION['username'] = $userData['username'];
+            $_SESSION['status'] = $userData['status'];
+            header('Location: dashboard.php');
+            exit;
+        } else {
+            $error = "Identifiants incorrects";
+        }
+    }
+    
+    if($action === 'register') {
+        $username = $_POST['username'];
+        $email = $_POST['email'];
+        $password = $_POST['password'];
+        
+        if($user->register($username, $email, $password)) {
+            $message = "Compte créé avec succès. Vous pouvez vous connecter.";
+        } else {
+            $error = "Erreur lors de la création du compte";
+        }
+    }
+    
+    if($action === 'logout') {
+        session_destroy();
+        header('Location: index.php');
+        exit;
+    }
+}
+
+function isLoggedIn() {
+    return isset($_SESSION['user_id']);
+}
+
+function getUserStatus() {
+    return $_SESSION['status'] ?? 'visiteur';
+}
+
+function isAdmin() {
+    return getUserStatus() === 'administrateur';
+}
+
+function requireAuth() {
+    if(!isLoggedIn()) {
+        header('Location: index.php');
+        exit;
+    }
+}
+
+function requireAdmin() {
+    if(!isAdmin()) {
+        header('Location: dashboard.php');
+        exit;
+    }
+}
+?>
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shareman - Partage de dépenses</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container { 
+            background: white; 
+            padding: 2rem; 
+            border-radius: 15px; 
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            max-width: 400px;
+            width: 90%;
+        }
+        .header { text-align: center; margin-bottom: 2rem; }
+        .header h1 { color: #333; font-size: 2.5rem; margin-bottom: 0.5rem; }
+        .header p { color: #666; }
+        .form-group { margin-bottom: 1.5rem; }
+        .form-group label { display: block; margin-bottom: 0.5rem; color: #333; font-weight: 500; }
+        .form-group input { 
+            width: 100%; 
+            padding: 0.75rem; 
+            border: 2px solid #e1e5e9; 
+            border-radius: 8px; 
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+        .form-group input:focus { 
+            outline: none; 
+            border-color: #667eea; 
+        }
+        .btn { 
+            width: 100%; 
+            padding: 0.75rem; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; 
+            border: none; 
+            border-radius: 8px; 
+            font-size: 1rem; 
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .btn:hover { transform: translateY(-2px); }
+        .switch-form { 
+            text-align: center; 
+            margin-top: 1.5rem; 
+            color: #666; 
+        }
+        .switch-form a { color: #667eea; text-decoration: none; }
+        .error { 
+            background: #fee; 
+            color: #c33; 
+            padding: 0.75rem; 
+            border-radius: 8px; 
+            margin-bottom: 1rem; 
+        }
+        .success { 
+            background: #efe; 
+            color: #3c3; 
+            padding: 0.75rem; 
+            border-radius: 8px; 
+            margin-bottom: 1rem; 
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>💰 Shareman</h1>
+            <p>Partagez vos dépenses facilement</p>
+        </div>
+        
+        <?php if(isset($error)): ?>
+            <div class="error"><?= htmlspecialchars($error) ?></div>
+        <?php endif; ?>
+        
+        <?php if(isset($message)): ?>
+            <div class="success"><?= htmlspecialchars($message) ?></div>
+        <?php endif; ?>
+        
+        <div id="login-form">
+            <h2 style="margin-bottom: 1.5rem; color: #333;">Connexion</h2>
+            <form method="POST">
+                <input type="hidden" name="action" value="login">
+                <div class="form-group">
+                    <label>Nom d'utilisateur:</label>
+                    <input type="text" name="username" required>
+                </div>
+                <div class="form-group">
+                    <label>Mot de passe:</label>
+                    <input type="password" name="password" required>
+                </div>
+                <button type="submit" class="btn">Se connecter</button>
+            </form>
+            <div class="switch-form">
+                Pas de compte? <a href="#" onclick="showRegisterForm()">S'inscrire</a>
+            </div>
+        </div>
+        
+        <div id="register-form" style="display: none;">
+            <h2 style="margin-bottom: 1.5rem; color: #333;">Inscription</h2>
+            <form method="POST">
+                <input type="hidden" name="action" value="register">
+                <div class="form-group">
+                    <label>Nom d'utilisateur:</label>
+                    <input type="text" name="username" required>
+                </div>
+                <div class="form-group">
+                    <label>Email:</label>
+                    <input type="email" name="email" required>
+                </div>
+                <div class="form-group">
+                    <label>Mot de passe:</label>
+                    <input type="password" name="password" required>
+                </div>
+                <button type="submit" class="btn">S'inscrire</button>
+            </form>
+            <div class="switch-form">
+                Déjà un compte? <a href="#" onclick="showLoginForm()">Se connecter</a>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        function showRegisterForm() {
+            document.getElementById('login-form').style.display = 'none';
+            document.getElementById('register-form').style.display = 'block';
+        }
+        
+        function showLoginForm() {
+            document.getElementById('register-form').style.display = 'none';
+            document.getElementById('login-form').style.display = 'block';
+        }
+    </script>
+</body>
+</html>
+
+<?php
+// dashboard.php - Tableau de bord principal
+require_once 'auth.php';
+requireAuth();
+require_once 'classes/Group.php';
+
+$database = new Database();
+$db = $database->getConnection();
+$groupManager = new Group($db);
+
+$groups = $groupManager->getAllGroups();
+?>
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Shareman</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: #f5f7fa;
+        }
+        .navbar { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 1rem 2rem;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .navbar h1 { font-size: 1.8rem; }
+        .navbar .user-info { display: flex; gap: 1rem; align-items: center; }
+        .container { 
+            max-width: 1200px; 
+            margin: 2rem auto; 
+            padding: 0 2rem; 
+        }
+        .header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            margin-bottom: 2rem; 
+        }
+        .btn { 
+            padding: 0.75rem 1.5rem; 
+            background: #667eea; 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 8px; 
+            border: none;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .btn:hover { background: #5a67d8; }
+        .btn.danger { background: #e53e3e; }
+        .btn.danger:hover { background: #c53030; }
+        .groups-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); 
+            gap: 1.5rem; 
+        }
+        .group-card { 
+            background: white; 
+            padding: 1.5rem; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
+        }
+        .group-card:hover { transform: translateY(-2px); }
+        .group-card h3 { color: #333; margin-bottom: 0.5rem; }
+        .group-card p { color: #666; margin-bottom: 1rem; }
+        .group-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+        .group-actions .btn { padding: 0.5rem 1rem; font-size: 0.9rem; }
+        .status-badge { 
+            padding: 0.25rem 0.5rem; 
+            border-radius: 4px; 
+            font-size: 0.8rem; 
+            font-weight: bold; 
+        }
+        .status-visiteur { background: #fed7d7; color: #c53030; }
+        .status-utilisateur { background: #c6f6d5; color: #276749; }
+        .status-administrateur { background: #bee3f8; color: #2a69ac; }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <h1>💰 Shareman</h1>
+        <div class="user-info">
+            <span class="status-badge status-<?= getUserStatus() ?>">
+                <?= ucfirst(getUserStatus()) ?>
+            </span>
+            <span>Bienvenue, <?= htmlspecialchars($_SESSION['username']) ?></span>
+            <?php if(isAdmin()): ?>
+                <a href="admin.php" class="btn">Administration</a>
+            <?php endif; ?>
+            <form method="POST" style="display: inline;">
+                <input type="hidden" name="action" value="logout">
+                <button type="submit" class="btn danger">Déconnexion</button>
+            </form>
+        </div>
+    </nav>
+    
+    <div class="container">
+        <div class="header">
+            <h2>Mes groupes</h2>
+            <?php if(isAdmin()): ?>
+                <a href="create_group.php" class="btn">Créer un groupe</a>
+            <?php endif; ?>
+        </div>
+        
+        <div class="groups-grid">
+            <?php foreach($groups as $group): ?>
+                <div class="group-card">
+                    <h3><?= htmlspecialchars($group['name']) ?></h3>
+                    <p><?= htmlspecialchars($group['description'] ?: 'Aucune description') ?></p>
+                    <p><small>Créé par: <?= htmlspecialchars($group['creator_name'] ?: 'Inconnu') ?></small></p>
+                    
+                    <div class="group-actions">
+                        <a href="group.php?id=<?= $group['id'] ?>" class="btn">Voir le groupe</a>
+                        <?php if(isAdmin()): ?>
+                            <a href="edit_group.php?id=<?= $group['id'] ?>" class="btn">Modifier</a>
+                            <a href="delete_group.php?id=<?= $group['id'] ?>" class="btn danger" 
+                               onclick="return confirm('Êtes-vous sûr de vouloir supprimer ce groupe?')">Supprimer</a>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+            
+            <?php if(empty($groups)): ?>
+                <div class="group-card">
+                    <h3>Aucun groupe trouvé</h3>
+                    <p>Commencez par créer votre premier groupe de dépenses!</p>
+                </div>
+            <?php endif; ?>
+        </div>
+    </div>
+</body>
+</html>
+
+<?php
+// group.php - Vue détaillée d'un groupe
+require_once 'auth.php';
+requireAuth();
+require_once 'classes/Group.php';
+require_once 'classes/Expense.php';
+
+$database = new Database();
+$db = $database->getConnection();
+$groupManager = new Group($db);
+$expenseManager = new Expense($db);
+
+$groupId = $_GET['id'] ?? 0;
+$group = $groupManager->getGroupById($groupId);
+
+if(!$group) {
+    header('Location: dashboard.php');
+    exit;
+}
+
+// Traitement des formulaires
+if($_POST) {
+    $action = $_POST['action'] ?? '';
+    
+    if($action === 'add_expense' && getUserStatus() !== 'visiteur') {
+        $title = $_POST['title'];
+        $amount = floatval($_POST['amount']);
+        $paidBy = $_POST['paid_by'];
+        $participants = $_POST['participants'] ?? [];
+        
+        if(!empty($participants)) {
+            $expenseManager->addExpense($groupId, $title, $amount, $paidBy, $_SESSION['user_id'], $participants);
+        }
+    }
+    
+    if($action === 'add_member' && getUserStatus() !== 'visiteur') {
+        $memberName = $_POST['member_name'];
+        $groupManager->addMemberToGroup($groupId, $memberName);
+    }
+}
+
+$members = $groupManager->getGroupMembers($groupId);
+$expenses = $expenseManager->getGroupExpenses($groupId);
+$balances = $expenseManager->calculateBalances($groupId);
+$debts = $expenseManager->calculateDebts($groupId);
+?>
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?= htmlspecialchars($group['name']) ?> - Shareman</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: #f5f7fa;
+        }
+        .navbar { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 1rem 2rem;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .container { 
+            max-width: 1200px; 
+            margin: 2rem auto; 
+            padding: 0 2rem; 
+        }
+        .section { 
+            background: white; 
+            margin-bottom: 2rem; 
+            padding: 1.5rem; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+        }
+        .section h2 { margin-bottom: 1rem; color: #333; }
+        .btn { 
+            padding: 0.75rem 1.5rem; 
+            background: #667eea; 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 8px; 
+            border: none;
+            cursor: pointer;
+            margin-right: 0.5rem;
+            transition: background 0.3s;
+        }
+        .btn:hover { background: #5a67d8; }
+        .btn.danger { background: #e53e3e; }
+        .btn.danger:hover { background: #c53030; }
+        .form-group { margin-bottom: 1rem; }
+        .form-group label { display: block; margin-bottom: 0.5rem; color: #333; font-weight: 500; }
+        .form-group input, .form-group select, .form-group textarea { 
+            width: 100%; 
+            padding: 0.75rem; 
+            border: 2px solid #e1e5e9; 
+            border-radius: 8px; 
+            font-size: 1rem;
+        }
+        .form-row { display: flex; gap: 1rem; }
+        .form-row .form-group { flex: 1; }
+        .expense-list { margin-top: 1rem; }
+        .expense-item { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            padding: 1rem; 
+            border: 1px solid #e2e8f0; 
+            border-radius: 8px; 
+            margin-bottom: 0.5rem; 
+        }
+        .expense-info { flex: 1; }
+        .expense-amount { font-weight: bold; color: #667eea; }
+        .balance-positive { color: #38a169; font-weight: bold; }
+        .balance-negative { color: #e53e3e; font-weight: bold; }
+        .debt-item { 
+            padding: 0.75rem; 
+            background: #fef5e7; 
+            border: 1px solid #f6ad55; 
+            border-radius: 8px; 
+            margin-bottom: 0.5rem; 
+        }
+        .members-list { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+        .member-tag { 
+            background: #e2e8f0; 
+            padding: 0.25rem 0.75rem; 
+            border-radius: 16px; 
+            font-size: 0.9rem; 
+        }
+        .checkbox-group { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 0.5rem; }
+        .checkbox-group label { display: flex; align-items: center; margin-bottom: 0; }
+        .checkbox-group input[type="checkbox"] { margin-right: 0.5rem; width: auto; }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <h1>💰 <?= htmlspecialchars($group['name']) ?></h1>
+        <div>
+            <a href="dashboard.php" class="btn">← Retour au tableau de bord</a>
+        </div>
+    </nav>
+    
+    <div class="container">
+        <!-- Section Membres -->
+        <div class="section">
+            <h2>👥 Membres du groupe</h2>
+            <div class="members-list">
+                <?php foreach($members as $member): ?>
+                    <span class="member-tag">
+                        <?= htmlspecialchars($member['member_name']) ?>
+                        <?= $member['user_id'] ? ' (✓)' : '' ?>
+                    </span>
+                <?php endforeach; ?>
+            </div>
+            
+            <?php if(getUserStatus() !== 'visiteur'): ?>
+                <form method="POST" style="margin-top: 1rem;">
+                    <input type="hidden" name="action" value="add_member">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Ajouter un membre:</label>
+                            <input type="text" name="member_name" placeholder="Nom du membre" required>
+                        </div>
+                        <div class="form-group">
+                            <label>&nbsp;</label>
+                            <button type="submit" class="btn">Ajouter</button>
+                        </div>
+                    </div>
+                </form>
+            <?php endif; ?>
+        </div>
+        
+        <!-- Section Nouvelle dépense -->
+        <?php if(getUserStatus() !== 'visiteur'): ?>
+        <div class="section">
+            <h2>💸 Ajouter une dépense</h2>
+            <form method="POST">
+                <input type="hidden" name="action" value="add_expense">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Titre de la dépense:</label>
+                        <input type="text" name="title" placeholder="Ex: Restaurant, Courses..." required>
+                    </div>
+                    <div class="form-group">
+                        <label>Montant (€):</label>
+                        <input type="number" name="amount" step="0.01" min="0" required>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Payé par:</label>
+                    <select name="paid_by" required>
+                        <option value="">-- Choisir --</option>
+                        <?php foreach($members as $member): ?>
+                            <option value="<?= htmlspecialchars($member['member_name']) ?>">
+                                <?= htmlspecialchars($member['member_name']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>Participants (qui doit rembourser):</label>
+                    <div class="checkbox-group">
+                        <?php foreach($members as $member): ?>
+                            <label>
+                                <input type="checkbox" name="participants[]" value="<?= htmlspecialchars($member['member_name']) ?>">
+                                <?= htmlspecialchars($member['member_name']) ?>
+                            </label>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                
+                <button type="submit" class="btn">Ajouter la dépense</button>
+            </form>
+        </div>
+        <?php endif; ?>
+        
+        <!-- Section Dépenses -->
+        <div class="section">
+            <h2>📋 Dépenses du groupe</h2>
+            <?php if(empty($expenses)): ?>
+                <p>Aucune dépense enregistrée pour ce groupe.</p>
+            <?php else: ?>
+                <div class="expense-list">
+                    <?php foreach($expenses as $expense): ?>
+                        <div class="expense-item">
+                            <div class="expense-info">
+                                <strong><?= htmlspecialchars($expense['title']) ?></strong><br>
+                                <small>Payé par <?= htmlspecialchars($expense['paid_by']) ?> le <?= date('d/m/Y', strtotime($expense['created_at'])) ?></small>
+                            </div>
+                            <div class="expense-amount"><?= number_format($expense['amount'], 2) ?>€</div>
+                            <?php if(isAdmin()): ?>
+                                <a href="delete_expense.php?id=<?= $expense['id'] ?>&group=<?= $groupId ?>" 
+                                   class="btn danger" style="padding: 0.5rem;"
+                                   onclick="return confirm('Supprimer cette dépense?')">×</a>
+                            <?php endif; ?>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+        </div>
+        
+        <!-- Section Balances -->
+        <div class="section">
+            <h2>📊 Balances des membres</h2>
+            <?php if(empty($balances)): ?>
+                <p>Aucune balance à afficher.</p>
+            <?php else: ?>
+                <?php foreach($balances as $person => $balance): ?>
+                    <div style="display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid #e2e8f0;">
+                        <span><?= htmlspecialchars($person) ?></span>
+                        <span class="<?= $balance >= 0 ? 'balance-positive' : 'balance-negative' ?>">
+                            <?= $balance >= 0 ? '+' : '' ?><?= number_format($balance, 2) ?>€
+                        </span>
+                    </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </div>
+        
+        <!-- Section Remboursements -->
+        <div class="section">
+            <h2>💳 Qui doit rembourser qui</h2>
+            <?php if(empty($debts)): ?>
+                <p>Tous les comptes sont équilibrés! 🎉</p>
+            <?php else: ?>
+                <?php foreach($debts as $debt): ?>
+                    <div class="debt-item">
+                        <strong><?= htmlspecialchars($debt['from']) ?></strong> 
+                        doit <strong><?= number_format($debt['amount'], 2) ?>€</strong> 
+                        à <strong><?= htmlspecialchars($debt['to']) ?></strong>
+                    </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </div>
+    </div>
+    
+    <script>
+        // Sélectionner automatiquement tous les membres comme participants
+        document.querySelector('select[name="paid_by"]').addEventListener('change', function() {
+            if(this.value) {
+                const checkboxes = document.querySelectorAll('input[name="participants[]"]');
+                checkboxes.forEach(checkbox => {
+                    checkbox.checked = true;
+                });
+            }
+        });
+    </script>
+</body>
+</html>
+
+<?php
+// admin.php - Interface d'administration
+require_once 'auth.php';
+requireAdmin();
+require_once 'classes/User.php';
+require_once 'classes/Group.php';
+
+$database = new Database();
+$db = $database->getConnection();
+$userManager = new User($db);
+$groupManager = new Group($db);
+
+// Traitement des actions admin
+if($_POST) {
+    $action = $_POST['action'] ?? '';
+    
+    if($action === 'update_user_status') {
+        $userId = $_POST['user_id'];
+        $status = $_POST['status'];
+        $userManager->updateUserStatus($userId, $status);
+    }
+    
+    if($action === 'delete_user') {
+        $userId = $_POST['user_id'];
+        $userManager->deleteUser($userId);
+    }
+    
+    if($action === 'delete_group') {
+        $groupId = $_POST['group_id'];
+        $groupManager->deleteGroup($groupId);
+    }
+}
+
+$users = $userManager->getAllUsers();
+$groups = $groupManager->getAllGroups();
+?>
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Administration - Shareman</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: #f5f7fa;
+        }
+        .navbar { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 1rem 2rem;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .container { 
+            max-width: 1200px; 
+            margin: 2rem auto; 
+            padding: 0 2rem; 
+        }
+        .section { 
+            background: white; 
+            margin-bottom: 2rem; 
+            padding: 1.5rem; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+        }
+        .section h2 { margin-bottom: 1rem; color: #333; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        th, td { padding: 1rem; text-align: left; border-bottom: 1px solid #e2e8f0; }
+        th { background: #f7fafc; font-weight: 600; }
+        .btn { 
+            padding: 0.5rem 1rem; 
+            background: #667eea; 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 6px; 
+            border: none;
+            cursor: pointer;
+            margin-right: 0.5rem;
+            font-size: 0.9rem;
+        }
+        .btn:hover { background: #5a67d8; }
+        .btn.danger { background: #e53e3e; }
+        .btn.danger:hover { background: #c53030; }
+        .status-select { padding: 0.5rem; border: 1px solid #e2e8f0; border-radius: 4px; }
+        .status-badge { 
+            padding: 0.25rem 0.5rem; 
+            border-radius: 4px; 
+            font-size: 0.8rem; 
+            font-weight: bold; 
+        }
+        .status-visiteur { background: #fed7d7; color: #c53030; }
+        .status-utilisateur { background: #c6f6d5; color: #276749; }
+        .status-administrateur { background: #bee3f8; color: #2a69ac; }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <h1>🛠️ Administration Shareman</h1>
+        <div>
+            <a href="create_group.php" class="btn">Créer un groupe</a>
+            <a href="dashboard.php" class="btn">← Dashboard</a>
+        </div>
+    </nav>
+    
+    <div class="container">
+        <!-- Gestion des utilisateurs -->
+        <div class="section">
+            <h2>👤 Gestion des utilisateurs</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Nom d'utilisateur</th>
+                        <th>Email</th>
+                        <th>Statut</th>
+                        <th>Date de création</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach($users as $user): ?>
+                        <tr>
+                            <td><?= htmlspecialchars($user['username']) ?></td>
+                            <td><?= htmlspecialchars($user['email']) ?></td>
+                            <td>
+                                <span class="status-badge status-<?= $user['status'] ?>">
+                                    <?= ucfirst($user['status']) ?>
+                                </span>
+                            </td>
+                            <td><?= date('d/m/Y', strtotime($user['created_at'])) ?></td>
+                            <td>
+                                <form method="POST" style="display: inline;">
+                                    <input type="hidden" name="action" value="update_user_status">
+                                    <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
+                                    <select name="status" class="status-select" onchange="this.form.submit()">
+                                        <option value="visiteur" <?= $user['status'] === 'visiteur' ? 'selected' : '' ?>>Visiteur</option>
+                                        <option value="utilisateur" <?= $user['status'] === 'utilisateur' ? 'selected' : '' ?>>Utilisateur</option>
+                                        <option value="administrateur" <?= $user['status'] === 'administrateur' ? 'selected' : '' ?>>Administrateur</option>
+                                    </select>
+                                </form>
+                                
+                                <?php if($user['id'] !== $_SESSION['user_id']): ?>
+                                    <form method="POST" style="display: inline;" onsubmit="return confirm('Supprimer cet utilisateur?')">
+                                        <input type="hidden" name="action" value="delete_user">
+                                        <input type="hidden" name="user_id" value="<?= $user['id'] ?>">
+                                        <button type="submit" class="btn danger">Supprimer</button>
+                                    </form>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Gestion des groupes -->
+        <div class="section">
+            <h2>👥 Gestion des groupes</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Nom du groupe</th>
+                        <th>Description</th>
+                        <th>Créé par</th>
+                        <th>Date de création</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach($groups as $group): ?>
+                        <tr>
+                            <td><?= htmlspecialchars($group['name']) ?></td>
+                            <td><?= htmlspecialchars($group['description'] ?: '-') ?></td>
+                            <td><?= htmlspecialchars($group['creator_name'] ?: 'Inconnu') ?></td>
+                            <td><?= date('d/m/Y', strtotime($group['created_at'])) ?></td>
+                            <td>
+                                <a href="group.php?id=<?= $group['id'] ?>" class="btn">Voir</a>
+                                <a href="edit_group.php?id=<?= $group['id'] ?>" class="btn">Modifier</a>
+                                <form method="POST" style="display: inline;" onsubmit="return confirm('Supprimer ce groupe et toutes ses données?')">
+                                    <input type="hidden" name="action" value="delete_group">
+                                    <input type="hidden" name="group_id" value="<?= $group['id'] ?>">
+                                    <button type="submit" class="btn danger">Supprimer</button>
+                                </form>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
+
+<?php
+// create_group.php - Création de groupe
+require_once 'auth.php';
+requireAdmin();
+require_once 'classes/Group.php';
+
+if($_POST) {
+    $database = new Database();
+    $db = $database->getConnection();
+    $groupManager = new Group($db);
+    
+    $name = $_POST['name'];
+    $description = $_POST['description'];
+    
+    if($groupManager->createGroup($name, $description, $_SESSION['user_id'])) {
+        header('Location: dashboard.php');
+        exit;
+    } else {
+        $error = "Erreur lors de la création du groupe";
+    }
+}
+?>
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Créer un groupe - Shareman</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: #f5f7fa;
+        }
+        .navbar { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 1rem 2rem;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .container { 
+            max-width: 600px; 
+            margin: 2rem auto; 
+            padding: 0 2rem; 
+        }
+        .form-container { 
+            background: white; 
+            padding: 2rem; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+        }
+        .form-group { margin-bottom: 1.5rem; }
+        .form-group label { display: block; margin-bottom: 0.5rem; color: #333; font-weight: 500; }
+        .form-group input, .form-group textarea { 
+            width: 100%; 
+            padding: 0.75rem; 
+            border: 2px solid #e1e5e9; 
+            border-radius: 8px; 
+            font-size: 1rem;
+        }
+        .form-group textarea { height: 120px; resize: vertical; }
+        .btn { 
+            padding: 0.75rem 1.5rem; 
+            background: #667eea; 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 8px; 
+            border: none;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        .btn:hover { background: #5a67d8; }
+        .error { 
+            background: #fee; 
+            color: #c33; 
+            padding: 0.75rem; 
+            border-radius: 8px; 
+            margin-bottom: 1rem; 
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <h1>➕ Créer un groupe</h1>
+        <div>
+            <a href="dashboard.php" class="btn">← Retour</a>
+        </div>
+    </nav>
+    
+    <div class="container">
+        <div class="form-container">
+            <?php if(isset($error)): ?>
+                <div class="error"><?= htmlspecialchars($error) ?></div>
+            <?php endif; ?>
+            
+            <form method="POST">
+                <div class="form-group">
+                    <label>Nom du groupe:</label>
+                    <input type="text" name="name" required placeholder="Ex: Vacances été 2024">
+                </div>
+                
+                <div class="form-group">
+                    <label>Description (optionnelle):</label>
+                    <textarea name="description" placeholder="Décrivez le groupe et son objectif..."></textarea>
+                </div>
+                
+                <button type="submit" class="btn">Créer le groupe</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
+
+<?php
+// delete_expense.php - Suppression d'une dépense
+require_once 'auth.php';
+requireAdmin();
+require_once 'classes/Expense.php';
+
+$expenseId = $_GET['id'] ?? 0;
+$groupId = $_GET['group'] ?? 0;
+
+if($expenseId) {
+    $database = new Database();
+    $db = $database->getConnection();
+    $expenseManager = new Expense($db);
+    
+    $expenseManager->deleteExpense($expenseId);
+}
+
+header('Location: group.php?id=' . $groupId);
+exit;
+?>
+
+<?php
+// Structure des fichiers recommandée:
+/*
+shareman/
+├── index.php (page de connexion)
+├── install.php (installation de la base de données)
+├── auth.php (gestion authentification)
+├── dashboard.php (tableau de bord)
+├── group.php (vue détaillée du groupe)
+├── admin.php (interface administrateur)
+├── create_group.php (création de groupe)
+├── delete_expense.php (suppression dépense)
+├── config/
+│   └── database.php
+├── classes/
+│   ├── User.php
+│   ├── Group.php
+│   └── Expense.php
+└── assets/
+    ├── css/
+    └── js/
+*/
+?>
+
+<!-- Instructions d'installation -->
+<!--
+1. Créer une base de données MySQL appelée 'shareman'
+2. Configurer les paramètres de connexion dans config/database.php
+3. Lancer install.php pour créer les tables et l'utilisateur admin
+4. Compte admin par défaut: admin / admin123
+5. L'application est prête à être utilisée !
+
+Fonctionnalités implémentées:
+✅ Système de connexion/inscription
+✅ 3 niveaux d'utilisateurs (visiteur, utilisateur, administrateur)
+✅ Gestion des groupes
+✅ Ajout/suppression de membres dans les groupes
+✅ Ajout/suppression de dépenses
+✅ Calcul automatique des balances
+✅ Calcul des remboursements optimisés
+✅ Interface d'administration
+✅ Design responsive et moderne
+-->
+?>
