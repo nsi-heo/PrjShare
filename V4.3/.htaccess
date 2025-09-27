@@ -1,0 +1,5 @@
+# .htaccess dans le dossier contenant config.php
+<Files "config.php">
+    Require all denied
+</Files>
+
