@@ -1,5 +1,5 @@
 <?php
-// dashboard.php - Tableau de bord principal (version améliorée)
+// dashboard.php - V4.3 avec filtrage des groupes (CORRIGÉ)
 require_once 'auth.php';
 requireAuth();
 require_once 'classes/Group.php';
@@ -8,10 +8,31 @@ $database = new Database();
 $db = $database->getConnection();
 $groupManager = new Group($db);
 
-$groups = $groupManager->getAllGroups();
+// Gestion du filtre d'affichage des groupes
+$onlyMyGroups = isset($_GET['only_my_groups']) && $_GET['only_my_groups'] == '1';
 
-// Message de confirmation de suppression
+// Pour les administrateurs : toujours voir tous les groupes, mais avec les infos d'appartenance
+// Pour les autres : utiliser le filtre
+if (isAdmin()) {
+    $groups = $groupManager->getGroupsForUser($_SESSION['user_id'], false);
+} else {
+    $groups = $groupManager->getGroupsForUser($_SESSION['user_id'], $onlyMyGroups);
+}
+
 $showDeleteMessage = isset($_GET['deleted']) && $_GET['deleted'] == '1';
+$showRequestMessage = isset($_GET['request_sent']) && $_GET['request_sent'] == '1';
+
+// Calculer le nombre de groupes dont l'utilisateur est membre
+$memberCount = 0;
+$createdCount = 0;
+foreach($groups as $g) {
+    if(isset($g['is_member']) && $g['is_member'] > 0) {
+        $memberCount++;
+    }
+    if(isset($g['is_creator']) && $g['is_creator'] > 0) {
+        $createdCount++;
+    }
+}
 ?>
 
 <!DOCTYPE html>
@@ -55,10 +76,6 @@ $showDeleteMessage = isset($_GET['deleted']) && $_GET['deleted'] == '1';
         .navbar h1 { 
             font-size: 1.8rem;
             font-weight: 600;
-            background: linear-gradient(45deg, #fff, #e0e7ff);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
         }
         
         .user-info { 
@@ -112,7 +129,6 @@ $showDeleteMessage = isset($_GET['deleted']) && $_GET['deleted'] == '1';
         .btn:hover { 
             background: rgba(255, 255, 255, 0.3);
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
         }
         
         .btn-danger {
@@ -130,55 +146,33 @@ $showDeleteMessage = isset($_GET['deleted']) && $_GET['deleted'] == '1';
             padding: 2rem 1rem; 
         }
         
-        .welcome-section {
-            text-align: center;
-            margin-bottom: 3rem;
-            color: white;
-        }
-        
-        .welcome-section h2 {
-            font-size: 2.5rem;
-            margin-bottom: 0.5rem;
-            font-weight: 300;
-        }
-        
-        .welcome-section p {
-            font-size: 1.1rem;
-            opacity: 0.9;
-        }
-        
-        .header { 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center; 
-            margin-bottom: 2rem;
+        .filter-section {
             background: rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(20px);
-            padding: 1.5rem;
-            border-radius: 16px;
+            padding: 1rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
             color: white;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
         }
         
-        .header h3 {
-            font-size: 1.5rem;
-            font-weight: 600;
+        .filter-section label {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+            font-weight: 500;
         }
         
-        .btn-primary {
-            background: linear-gradient(135deg, #10b981, #059669);
-            color: white;
-            padding: 0.8rem 1.6rem;
-            font-size: 1rem;
-            border: none;
-            box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
+        .filter-section input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
         }
         
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
-        }
-        
-        .success-message {
+        .success-message, .info-message {
             background: linear-gradient(135deg, #d1fae5, #a7f3d0);
             color: #065f46;
             padding: 1rem;
@@ -186,6 +180,12 @@ $showDeleteMessage = isset($_GET['deleted']) && $_GET['deleted'] == '1';
             margin-bottom: 2rem;
             border: 1px solid #6ee7b7;
             font-weight: 500;
+        }
+        
+        .info-message {
+            background: linear-gradient(135deg, #dbeafe, #bfdbfe);
+            color: #1e40af;
+            border: 1px solid #93c5fd;
         }
         
         .groups-grid { 
@@ -216,6 +216,14 @@ $showDeleteMessage = isset($_GET['deleted']) && $_GET['deleted'] == '1';
             background: linear-gradient(90deg, #667eea, #764ba2);
         }
         
+        .group-card.non-member {
+            opacity: 0.8;
+        }
+        
+        .group-card.non-member::before {
+            background: linear-gradient(90deg, #9ca3af, #6b7280);
+        }
+        
         .group-card:hover { 
             transform: translateY(-8px);
             box-shadow: 0 16px 48px rgba(0, 0, 0, 0.15);
@@ -234,18 +242,28 @@ $showDeleteMessage = isset($_GET['deleted']) && $_GET['deleted'] == '1';
             font-size: 0.95rem;
         }
         
-        .group-meta {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            margin-bottom: 1.5rem;
-            font-size: 0.875rem;
-            color: #9ca3af;
+        .membership-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-left: 0.5rem;
         }
         
-        .group-meta svg {
-            width: 16px;
-            height: 16px;
+        .badge-member {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        
+        .badge-non-member {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .badge-pending {
+            background: #fef3c7;
+            color: #92400e;
         }
         
         .group-actions { 
@@ -265,81 +283,18 @@ $showDeleteMessage = isset($_GET['deleted']) && $_GET['deleted'] == '1';
             justify-content: center;
         }
         
-        .group-actions .btn:hover {
-            background: #5a67d8;
-            transform: translateY(-1px);
+        .btn-primary {
+            background: linear-gradient(135deg, #10b981, #059669);
         }
         
-        .group-actions .btn-secondary {
-            background: #6b7280;
-        }
-        
-        .group-actions .btn-secondary:hover {
-            background: #4b5563;
-        }
-        
-        .group-actions .btn-danger {
-            background: #ef4444;
-            border-color: #ef4444;
-        }
-        
-        .group-actions .btn-danger:hover {
-            background: #dc2626;
-        }
-        
-        .empty-state {
-            text-align: center;
-            padding: 4rem 2rem;
-            background: rgba(255, 255, 255, 0.9);
-            border-radius: 20px;
-            backdrop-filter: blur(20px);
-            border: 2px dashed #d1d5db;
-        }
-        
-        .empty-state h3 {
-            font-size: 1.5rem;
-            color: #374151;
-            margin-bottom: 1rem;
-        }
-        
-        .empty-state p {
-            color: #6b7280;
-            margin-bottom: 2rem;
-        }
-        
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin-bottom: 2rem;
-        }
-        
-        .stat-card {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(20px);
-            padding: 1.5rem;
-            border-radius: 12px;
-            text-align: center;
-            color: white;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
-        .stat-number {
-            font-size: 2rem;
-            font-weight: bold;
-            margin-bottom: 0.5rem;
-        }
-        
-        .stat-label {
-            opacity: 0.8;
-            font-size: 0.875rem;
+        .btn-warning {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
         }
         
         @media (max-width: 768px) {
             .navbar-content {
                 flex-direction: column;
                 text-align: center;
-                gap: 1rem;
             }
             
             .user-info {
@@ -348,18 +303,9 @@ $showDeleteMessage = isset($_GET['deleted']) && $_GET['deleted'] == '1';
                 width: 100%;
             }
             
-            .container {
-                padding: 1rem 0.5rem;
-            }
-            
-            .welcome-section h2 {
-                font-size: 1.8rem;
-            }
-            
-            .header {
+            .filter-section {
                 flex-direction: column;
-                gap: 1rem;
-                text-align: center;
+                align-items: flex-start;
             }
             
             .groups-grid {
@@ -373,34 +319,6 @@ $showDeleteMessage = isset($_GET['deleted']) && $_GET['deleted'] == '1';
             .group-actions .btn {
                 flex: none;
                 width: 100%;
-            }
-            
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
-                gap: 0.75rem;
-            }
-            
-            .stat-card {
-                padding: 1rem;
-            }
-            
-            .stat-number {
-                font-size: 1.5rem;
-            }
-        }
-        
-        @media (max-width: 480px) {
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .group-card {
-                padding: 1.5rem;
-            }
-            
-            .btn {
-                padding: 0.5rem 1rem;
-                font-size: 0.8rem;
             }
         }
     </style>
@@ -426,59 +344,130 @@ $showDeleteMessage = isset($_GET['deleted']) && $_GET['deleted'] == '1';
     </nav>
     
     <div class="container">
-        <div class="welcome-section">
-            <h2>Tableau de bord</h2>
-            <p>Gérez vos groupes et vos dépenses partagées</p>
-        </div>
-        
         <?php if($showDeleteMessage): ?>
             <div class="success-message">
                 Le groupe a été supprimé avec succès.
             </div>
         <?php endif; ?>
         
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-number"><?= count($groups) ?></div>
-                <div class="stat-label">Groupes total</div>
+        <?php if($showRequestMessage): ?>
+            <div class="info-message">
+                Votre demande d'intégration a été envoyée. Elle sera examinée par un administrateur.
             </div>
-            <div class="stat-card">
-                <div class="stat-number"><?= getUserStatus() === 'administrateur' ? 'Admin' : 'User' ?></div>
-                <div class="stat-label">Votre statut</div>
-            </div>
-        </div>
+        <?php endif; ?>
         
-        <div class="header">
-            <h3>Mes groupes</h3>
-            <?php if(isAdmin()): ?>
-                <a href="create_group.php" class="btn btn-primary">+ Créer un groupe</a>
-            <?php endif; ?>
+        <!-- Filtre pour utilisateurs non-admin -->
+        <?php if(!isAdmin()): ?>
+        <div class="filter-section">
+            <label>
+                <input type="checkbox" 
+                       id="filter-toggle"
+                       <?= $onlyMyGroups ? 'checked' : '' ?>
+                       onchange="toggleFilter(this.checked)">
+                Afficher uniquement mes groupes
+            </label>
+        </div>
+        <?php endif; ?>
+        
+        <!-- Header avec statistiques -->
+        <div style="background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(20px); padding: 1.5rem; border-radius: 16px; color: white; margin-bottom: 2rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+                <div>
+                    <h2 style="margin-bottom: 0.5rem;">
+                        <?php if(isAdmin()): ?>
+                            Tous les groupes
+                        <?php else: ?>
+                            Mes groupes
+                        <?php endif; ?>
+                    </h2>
+                    <p style="opacity: 0.9; font-size: 0.9rem;">
+                        <?php if(isAdmin()): ?>
+                            <?= $memberCount ?> groupe(s) dont vous êtes membre
+                            <?php if($createdCount > 0): ?>
+                                • <?= $createdCount ?> groupe(s) créé(s) par vous
+                            <?php endif; ?>
+                        <?php else: ?>
+                            <?= $memberCount ?> groupe(s) dont vous êtes membre
+                        <?php endif; ?>
+                    </p>
+                </div>
+                <?php if(isAdmin()): ?>
+                    <a href="create_group.php" class="btn btn-primary">+ Créer un groupe</a>
+                <?php endif; ?>
+            </div>
         </div>
         
         <?php if(empty($groups)): ?>
-            <div class="empty-state">
-                <h3>Aucun groupe trouvé</h3>
-                <p>Commencez par créer votre premier groupe de dépenses partagées!</p>
-                <?php if(isAdmin()): ?>
-                    <a href="create_group.php" class="btn btn-primary">Créer mon premier groupe</a>
-                <?php endif; ?>
+            <div style="text-align: center; padding: 4rem 2rem; background: rgba(255, 255, 255, 0.9); border-radius: 20px;">
+                <h3 style="color: #374151; margin-bottom: 1rem;">Aucun groupe trouvé</h3>
+                <p style="color: #6b7280;">
+                    <?php if(isAdmin()): ?>
+                        Commencez par créer votre premier groupe de dépenses partagées!
+                    <?php else: ?>
+                        Aucun groupe disponible pour le moment.
+                    <?php endif; ?>
+                </p>
             </div>
         <?php else: ?>
             <div class="groups-grid">
-                <?php foreach($groups as $group): ?>
-                    <div class="group-card">
-                        <h3><?= htmlspecialchars($group['name']) ?></h3>
+                <?php foreach($groups as $group): 
+                    $isMember = isset($group['is_member']) && $group['is_member'] > 0;
+                    $isCreator = isset($group['is_creator']) && $group['is_creator'] > 0;
+                    $hasPendingRequest = !$isMember && $groupManager->hasPendingRequest($group['id'], $_SESSION['user_id']);
+                ?>
+                    <div class="group-card <?= !$isMember ? 'non-member' : '' ?>">
+                        <h3>
+                            <?= htmlspecialchars($group['name']) ?>
+                            <?php if($isMember): ?>
+                                <span class="membership-badge badge-member">Membre</span>
+                            <?php elseif($hasPendingRequest): ?>
+                                <span class="membership-badge badge-pending">Demande en attente</span>
+                            <?php else: ?>
+                                <span class="membership-badge badge-non-member">Non membre</span>
+                            <?php endif; ?>
+                            <?php if($isCreator): ?>
+                                <span class="membership-badge" style="background: #dbeafe; color: #1e40af;">Créateur</span>
+                            <?php endif; ?>
+                        </h3>
                         <p><?= htmlspecialchars($group['description'] ?: 'Aucune description disponible') ?></p>
-                        <div class="group-meta">
-                            <span>👤 Créé par <?= htmlspecialchars($group['creator_name'] ?: 'Inconnu') ?></span>
+                        <div style="color: #9ca3af; font-size: 0.875rem; margin-bottom: 1rem;">
+                            <span>Créé par <?= htmlspecialchars($group['creator_name'] ?: 'Inconnu') ?></span>
+                            <?php if(isset($group['member_count'])): ?>
+                                <span> • <?= $group['member_count'] ?> membre(s)</span>
+                            <?php endif; ?>
                         </div>
                         
                         <div class="group-actions">
-                            <a href="group.php?id=<?= $group['id'] ?>" class="btn">Voir le groupe</a>
-                            <?php if(isAdmin()): ?>
-                                <a href="edit_group.php?id=<?= $group['id'] ?>" class="btn btn-secondary">Modifier</a>
-                                <a href="delete_group.php?id=<?= $group['id'] ?>" class="btn btn-danger" 
-                                   onclick="return confirm('Êtes-vous sûr de vouloir supprimer ce groupe?')">Supprimer</a>
+                            <?php if($isMember): ?>
+                                <!-- Actions pour les membres -->
+                                <a href="group.php?id=<?= $group['id'] ?>" class="btn">Voir le groupe</a>
+                                <?php if(isAdmin()): ?>
+                                    <a href="edit_group.php?id=<?= $group['id'] ?>" class="btn" style="background: #6b7280;">Modifier</a>
+                                    <a href="delete_group.php?id=<?= $group['id'] ?>" class="btn btn-danger" 
+                                       onclick="return confirm('Êtes-vous sûr de vouloir supprimer ce groupe?')">Supprimer</a>
+                                <?php endif; ?>
+                            <?php else: ?>
+                                <!-- Actions pour les non-membres -->
+                                <?php if($hasPendingRequest): ?>
+                                    <button class="btn" disabled style="opacity: 0.6; cursor: not-allowed;">
+                                        Demande en attente
+                                    </button>
+                                <?php else: ?>
+                                    <a href="request_join.php?group_id=<?= $group['id'] ?>" 
+                                       class="btn btn-warning"
+                                       onclick="return confirm('Demander à rejoindre ce groupe?')">
+                                        Demander l'accès
+                                    </a>
+                                <?php endif; ?>
+                                <a href="group_preview.php?id=<?= $group['id'] ?>" class="btn" style="background: #6b7280;">
+                                    Aperçu
+                                </a>
+                                <?php if(isAdmin()): ?>
+                                    <!-- Admin peut modifier/supprimer même s'il n'est pas membre -->
+                                    <a href="edit_group.php?id=<?= $group['id'] ?>" class="btn" style="background: #6b7280;">Modifier</a>
+                                    <a href="delete_group.php?id=<?= $group['id'] ?>" class="btn btn-danger" 
+                                       onclick="return confirm('Êtes-vous sûr de vouloir supprimer ce groupe?')">Supprimer</a>
+                                <?php endif; ?>
                             <?php endif; ?>
                         </div>
                     </div>
@@ -486,5 +475,17 @@ $showDeleteMessage = isset($_GET['deleted']) && $_GET['deleted'] == '1';
             </div>
         <?php endif; ?>
     </div>
+    
+    <script>
+        function toggleFilter(checked) {
+            const url = new URL(window.location);
+            if (checked) {
+                url.searchParams.set('only_my_groups', '1');
+            } else {
+                url.searchParams.delete('only_my_groups');
+            }
+            window.location = url.toString();
+        }
+    </script>
 </body>
 </html>

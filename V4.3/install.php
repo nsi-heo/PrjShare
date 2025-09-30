@@ -1,5 +1,5 @@
 <?php
-// install.php - Script d'installation de la base de données v4.1
+// install.php - Script d'installation de la base de données v4.3
 require_once 'config/database.php';
 
 $database = new Database();
@@ -48,7 +48,7 @@ $queries = [
         INDEX idx_group_member (group_id, member_name)
     )",
     
-    // Table member_stay_periods (NOUVELLE)
+    // Table member_stay_periods
     "CREATE TABLE IF NOT EXISTS member_stay_periods (
         id INT AUTO_INCREMENT PRIMARY KEY,
         group_id INT NOT NULL,
@@ -61,6 +61,20 @@ $queries = [
         FOREIGN KEY (group_id) REFERENCES groups_table(id) ON DELETE CASCADE,
         UNIQUE KEY unique_member_stay (group_id, member_name),
         INDEX idx_group_member_stay (group_id, member_name)
+    )",
+    
+    // Table group_join_requests (NOUVELLE V4.3)
+    "CREATE TABLE IF NOT EXISTS group_join_requests (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        group_id INT NOT NULL,
+        user_id INT NOT NULL,
+        status ENUM('pending', 'approved', 'rejected') DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        processed_at TIMESTAMP NULL,
+        FOREIGN KEY (group_id) REFERENCES groups_table(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE KEY unique_request (group_id, user_id, status),
+        INDEX idx_pending_requests (group_id, status)
     )",
     
     // Table expenses avec colonne expense_mode
@@ -124,8 +138,8 @@ $migrationQueries = [
      FOREIGN KEY (modified_by) REFERENCES users(id) ON DELETE SET NULL"
 ];
 
-echo "<h1>🚀 Installation Shareman v4.1</h1>";
-echo "<p><strong>Nouveau :</strong> Mode séjour avec coefficients de participation et périodes personnalisées !</p>";
+echo "<h1>🚀 Installation Shareman v4.3</h1>";
+echo "<p><strong>Nouveau :</strong> Gestion des demandes d'intégration et règlements totaux !</p>";
 echo "<hr>";
 
 // Exécuter les requêtes principales
@@ -154,12 +168,14 @@ echo "<hr>";
 echo "<h2>✅ Installation terminée !</h2>";
 
 // Vérifier les fonctionnalités
-echo "<h3>🔧 Vérification des fonctionnalités :</h3>";
+echo "<h3>🔧 Vérifications des fonctionnalités :</h3>";
 echo "<ul>";
 echo "<li><strong>Mode classique :</strong> Partage égal des dépenses entre participants ✓</li>";
 echo "<li><strong>Mode séjour :</strong> Calcul basé sur les coefficients et durées de séjour ✓</li>";
+echo "<li><strong>Règlements totaux :</strong> Combinaison des modes classique et séjour ✓</li>";
 echo "<li><strong>Gestion des membres :</strong> Comptes liés ou non-liés ✓</li>";
-echo "<li><strong>Périodes personnalisées :</strong> Chaque membre peut avoir sa propre période ✓</li>";
+echo "<li><strong>Demandes d'intégration :</strong> Validation par administrateur ✓</li>";
+echo "<li><strong>Filtrage des groupes :</strong> Vue personnalisée pour chaque utilisateur ✓</li>";
 echo "</ul>";
 
 echo "<h3>👤 Compte administrateur :</h3>";
@@ -169,13 +185,14 @@ echo "<strong>Mot de passe :</strong> admin123<br>";
 echo "<em>Changez ce mot de passe après la première connexion !</em>";
 echo "</div>";
 
-echo "<h3>🎯 Nouvelles fonctionnalités v4.1 :</h3>";
+echo "<h3>🎯 Nouvelles fonctionnalités v4.3 :</h3>";
 echo "<ul>";
-echo "<li><strong>Mode séjour :</strong> Activez/désactivez pour chaque groupe</li>";
-echo "<li><strong>Coefficients de participation :</strong> Ajustez la part de chaque membre (0.1 à 10.0)</li>";
-echo "<li><strong>Périodes personnalisées :</strong> Chaque membre peut avoir des dates différentes</li>";
-echo "<li><strong>Calcul automatique :</strong> Les parts sont calculées proportionnellement</li>";
-echo "<li><strong>Double comptabilité :</strong> Bilans séparés pour mode classique et séjour</li>";
+echo "<li><strong>Règlements totaux :</strong> Onglet combinant dépenses classiques et séjour</li>";
+echo "<li><strong>Demandes d'intégration :</strong> Les visiteurs/utilisateurs peuvent demander à rejoindre un groupe</li>";
+echo "<li><strong>Validation admin :</strong> Les administrateurs approuvent ou rejettent les demandes</li>";
+echo "<li><strong>Mise à niveau auto :</strong> Les visiteurs deviennent utilisateurs après validation</li>";
+echo "<li><strong>Filtrage groupes :</strong> Option pour voir tous les groupes ou seulement ceux où on est membre</li>";
+echo "<li><strong>Vue limitée :</strong> Les non-membres voient le nom, description et membres mais pas les dépenses</li>";
 echo "</ul>";
 
 echo "<div style='margin-top: 2rem; padding: 1rem; background: #e8f5e8; border-radius: 5px;'>";
@@ -188,6 +205,7 @@ try {
     $userCount = $db->query("SELECT COUNT(*) FROM users")->fetchColumn();
     $groupCount = $db->query("SELECT COUNT(*) FROM groups_table")->fetchColumn();
     $expenseCount = $db->query("SELECT COUNT(*) FROM expenses")->fetchColumn();
+    $pendingRequests = $db->query("SELECT COUNT(*) FROM group_join_requests WHERE status = 'pending'")->fetchColumn();
     
     if ($userCount > 1 || $groupCount > 0 || $expenseCount > 0) {
         echo "<h3>📊 Statistiques actuelles :</h3>";
@@ -195,6 +213,7 @@ try {
         echo "<li><strong>Utilisateurs :</strong> $userCount</li>";
         echo "<li><strong>Groupes :</strong> $groupCount</li>";
         echo "<li><strong>Dépenses :</strong> $expenseCount</li>";
+        echo "<li><strong>Demandes en attente :</strong> $pendingRequests</li>";
         echo "</ul>";
     }
 } catch(PDOException $e) {

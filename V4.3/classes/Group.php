@@ -1,5 +1,5 @@
 <?php
-// classes/Group.php - Version avec mode séjour
+// classes/Group.php - Version V4.3 avec gestion des demandes d'intégration
 class Group {
     private $conn;
     
@@ -22,7 +22,175 @@ class Group {
         }
     }
     
-    // NOUVEAU : Configuration du mode séjour
+    // NOUVEAU V4.3 : Créer une demande d'intégration à un groupe
+    public function createJoinRequest($groupId, $userId) {
+        try {
+            // Vérifier si l'utilisateur est déjà membre
+            if ($this->isUserInGroup($groupId, $userId)) {
+                return ['status' => 'error', 'message' => 'Vous êtes déjà membre de ce groupe'];
+            }
+            
+            // Vérifier si une demande existe déjà
+            $checkQuery = "SELECT COUNT(*) FROM group_join_requests WHERE group_id = ? AND user_id = ? AND status = 'pending'";
+            $checkStmt = $this->conn->prepare($checkQuery);
+            $checkStmt->execute([$groupId, $userId]);
+            
+            if ($checkStmt->fetchColumn() > 0) {
+                return ['status' => 'error', 'message' => 'Vous avez déjà une demande en attente pour ce groupe'];
+            }
+            
+            // Créer la demande
+            $query = "INSERT INTO group_join_requests (group_id, user_id, status) VALUES (?, ?, 'pending')";
+            $stmt = $this->conn->prepare($query);
+            
+            if ($stmt->execute([$groupId, $userId])) {
+                return ['status' => 'success', 'message' => 'Demande d\'intégration envoyée avec succès'];
+            }
+            return ['status' => 'error', 'message' => 'Erreur lors de l\'envoi de la demande'];
+        } catch(PDOException $e) {
+            error_log("Erreur création demande intégration: " . $e->getMessage());
+            return ['status' => 'error', 'message' => 'Erreur système'];
+        }
+    }
+    
+    // NOUVEAU V4.3 : Récupérer les demandes d'intégration en attente
+    public function getPendingJoinRequests($groupId = null) {
+        try {
+            if ($groupId) {
+                $query = "SELECT jr.*, u.username, u.email, g.name as group_name 
+                         FROM group_join_requests jr
+                         JOIN users u ON jr.user_id = u.id
+                         JOIN groups_table g ON jr.group_id = g.id
+                         WHERE jr.group_id = ? AND jr.status = 'pending'
+                         ORDER BY jr.created_at DESC";
+                $stmt = $this->conn->prepare($query);
+                $stmt->execute([$groupId]);
+            } else {
+                $query = "SELECT jr.*, u.username, u.email, g.name as group_name 
+                         FROM group_join_requests jr
+                         JOIN users u ON jr.user_id = u.id
+                         JOIN groups_table g ON jr.group_id = g.id
+                         WHERE jr.status = 'pending'
+                         ORDER BY jr.created_at DESC";
+                $stmt = $this->conn->prepare($query);
+                $stmt->execute();
+            }
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch(PDOException $e) {
+            error_log("Erreur récupération demandes: " . $e->getMessage());
+            return [];
+        }
+    }
+    
+    // NOUVEAU V4.3 : Approuver une demande d'intégration
+    public function approveJoinRequest($requestId) {
+        try {
+            // Récupérer les détails de la demande
+            $query = "SELECT jr.*, u.username FROM group_join_requests jr
+                     JOIN users u ON jr.user_id = u.id
+                     WHERE jr.id = ? AND jr.status = 'pending'";
+            $stmt = $this->conn->prepare($query);
+            $stmt->execute([$requestId]);
+            $request = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            if (!$request) {
+                return ['status' => 'error', 'message' => 'Demande introuvable'];
+            }
+            
+            $this->conn->beginTransaction();
+            
+            // Ajouter le membre au groupe
+            $addQuery = "INSERT INTO group_members (group_id, user_id, member_name, status) 
+                        VALUES (?, ?, ?, 'active')";
+            $addStmt = $this->conn->prepare($addQuery);
+            $addStmt->execute([$request['group_id'], $request['user_id'], $request['username']]);
+            
+            // Créer une période de séjour par défaut si nécessaire
+            $this->createDefaultStayPeriodForMember($request['group_id'], $request['username']);
+            
+            // Mettre à jour le statut de la demande
+            $updateQuery = "UPDATE group_join_requests SET status = 'approved', processed_at = NOW() WHERE id = ?";
+            $updateStmt = $this->conn->prepare($updateQuery);
+            $updateStmt->execute([$requestId]);
+            
+            // Mettre à jour le statut de l'utilisateur si c'est un visiteur
+            $userQuery = "UPDATE users SET status = 'utilisateur' WHERE id = ? AND status = 'visiteur'";
+            $userStmt = $this->conn->prepare($userQuery);
+            $userStmt->execute([$request['user_id']]);
+            
+            $this->conn->commit();
+            return ['status' => 'success', 'message' => 'Demande approuvée avec succès'];
+        } catch(PDOException $e) {
+            $this->conn->rollback();
+            error_log("Erreur approbation demande: " . $e->getMessage());
+            return ['status' => 'error', 'message' => 'Erreur système'];
+        }
+    }
+    
+    // NOUVEAU V4.3 : Rejeter une demande d'intégration
+    public function rejectJoinRequest($requestId) {
+        try {
+            $query = "UPDATE group_join_requests SET status = 'rejected', processed_at = NOW() WHERE id = ?";
+            $stmt = $this->conn->prepare($query);
+            
+            if ($stmt->execute([$requestId])) {
+                return ['status' => 'success', 'message' => 'Demande rejetée'];
+            }
+            return ['status' => 'error', 'message' => 'Erreur lors du rejet'];
+        } catch(PDOException $e) {
+            error_log("Erreur rejet demande: " . $e->getMessage());
+            return ['status' => 'error', 'message' => 'Erreur système'];
+        }
+    }
+    
+    // NOUVEAU V4.3 : Vérifier si l'utilisateur a une demande en attente
+    public function hasPendingRequest($groupId, $userId) {
+        try {
+            $query = "SELECT COUNT(*) FROM group_join_requests WHERE group_id = ? AND user_id = ? AND status = 'pending'";
+            $stmt = $this->conn->prepare($query);
+            $stmt->execute([$groupId, $userId]);
+            return $stmt->fetchColumn() > 0;
+        } catch(PDOException $e) {
+            error_log("Erreur vérification demande: " . $e->getMessage());
+            return false;
+        }
+    }
+    
+    // NOUVEAU V4.3 : Récupérer les groupes pour un utilisateur (avec filtre)
+    public function getGroupsForUser($userId, $onlyMemberGroups = false) {
+        try {
+            if ($onlyMemberGroups) {
+                // Seulement les groupes où l'utilisateur est membre
+                $query = "SELECT DISTINCT g.*, u.username as creator_name,
+                                (SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count,
+                                1 as is_member,
+                                (g.created_by = ?) as is_creator
+                         FROM groups_table g
+                         LEFT JOIN users u ON g.created_by = u.id
+                         INNER JOIN group_members gm ON g.id = gm.group_id
+                         WHERE gm.user_id = ?
+                         ORDER BY g.name";
+                $stmt = $this->conn->prepare($query);
+                $stmt->execute([$userId, $userId]);
+            } else {
+                // Tous les groupes avec info d'appartenance
+                $query = "SELECT g.*, u.username as creator_name,
+                                (SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count,
+                                (SELECT COUNT(*) FROM group_members WHERE group_id = g.id AND user_id = ?) as is_member,
+                                (g.created_by = ?) as is_creator
+                         FROM groups_table g
+                         LEFT JOIN users u ON g.created_by = u.id
+                         ORDER BY g.name";
+                $stmt = $this->conn->prepare($query);
+                $stmt->execute([$userId, $userId]);
+            }
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch(PDOException $e) {
+            error_log("Erreur récupération groupes utilisateur: " . $e->getMessage());
+            return [];
+        }
+    }
+    
     public function configureStayMode($groupId, $startDate, $endDate) {
         try {
             if (strtotime($startDate) > strtotime($endDate)) {
@@ -35,7 +203,6 @@ class Group {
             $stmt = $this->conn->prepare($query);
             
             if ($stmt->execute([$startDate, $endDate, $groupId])) {
-                // Créer les périodes par défaut pour tous les membres existants
                 $this->createDefaultStayPeriodsForMembers($groupId, $startDate, $endDate);
                 return ['status' => 'success'];
             }
@@ -46,7 +213,6 @@ class Group {
         }
     }
     
-    // NOUVEAU : Créer les périodes par défaut pour tous les membres
     private function createDefaultStayPeriodsForMembers($groupId, $startDate, $endDate) {
         try {
             $members = $this->getGroupMembers($groupId);
@@ -63,10 +229,8 @@ class Group {
         }
     }
     
-    // NOUVEAU : Mettre à jour une période de séjour pour un membre
     public function updateMemberStayPeriod($groupId, $memberName, $startDate, $endDate, $coefficient) {
         try {
-            // Vérifier que les dates sont dans la période du groupe
             $group = $this->getGroupById($groupId);
             if (!$group || !$group['stay_mode_enabled']) {
                 return ['status' => 'error', 'message' => 'Le mode séjour n\'est pas activé pour ce groupe'];
@@ -81,7 +245,6 @@ class Group {
                 return ['status' => 'error', 'message' => 'Les dates doivent être comprises dans la période de séjour du groupe'];
             }
             
-            // Insérer ou mettre à jour
             $query = "INSERT INTO member_stay_periods (group_id, member_name, start_date, end_date, coefficient) 
                      VALUES (?, ?, ?, ?, ?) 
                      ON DUPLICATE KEY UPDATE 
@@ -103,7 +266,6 @@ class Group {
         }
     }
     
-    // NOUVEAU : Récupérer les périodes de séjour des membres
     public function getMemberStayPeriods($groupId) {
         try {
             $query = "SELECT * FROM member_stay_periods WHERE group_id = ? ORDER BY member_name";
@@ -116,7 +278,6 @@ class Group {
         }
     }
     
-    // NOUVEAU : Créer une période par défaut pour un nouveau membre
     public function createDefaultStayPeriodForMember($groupId, $memberName) {
         try {
             $group = $this->getGroupById($groupId);
@@ -131,7 +292,6 @@ class Group {
         }
     }
     
-    // NOUVEAU : Désactiver le mode séjour
     public function disableStayMode($groupId) {
         try {
             $query = "UPDATE groups_table 
@@ -140,7 +300,6 @@ class Group {
             $stmt = $this->conn->prepare($query);
             
             if ($stmt->execute([$groupId])) {
-                // Supprimer toutes les périodes de séjour des membres
                 $deleteQuery = "DELETE FROM member_stay_periods WHERE group_id = ?";
                 $deleteStmt = $this->conn->prepare($deleteQuery);
                 $deleteStmt->execute([$groupId]);
@@ -186,7 +345,6 @@ class Group {
             $stmt = $this->conn->prepare($query);
             
             if ($stmt->execute([$groupId, $userId, $memberName])) {
-                // Créer une période de séjour par défaut si le mode est activé
                 $this->createDefaultStayPeriodForMember($groupId, $memberName);
                 return true;
             }
@@ -212,20 +370,17 @@ class Group {
     
     public function removeMemberFromGroup($memberId, $groupId) {
         try {
-            // D'abord récupérer le nom du membre
             $memberQuery = "SELECT member_name FROM group_members WHERE id = ? AND group_id = ?";
             $memberStmt = $this->conn->prepare($memberQuery);
             $memberStmt->execute([$memberId, $groupId]);
             $member = $memberStmt->fetch(PDO::FETCH_ASSOC);
             
             if ($member) {
-                // Supprimer la période de séjour
                 $deleteStayQuery = "DELETE FROM member_stay_periods WHERE group_id = ? AND member_name = ?";
                 $deleteStayStmt = $this->conn->prepare($deleteStayQuery);
                 $deleteStayStmt->execute([$groupId, $member['member_name']]);
             }
             
-            // Supprimer le membre
             $query = "DELETE FROM group_members WHERE id = ? AND group_id = ?";
             $stmt = $this->conn->prepare($query);
             return $stmt->execute([$memberId, $groupId]);
@@ -235,7 +390,6 @@ class Group {
         }
     }
     
-    // Méthodes existantes (inchangées)...
     public function isUserInGroup($groupId, $userId) {
         try {
             $query = "SELECT COUNT(*) FROM group_members WHERE group_id = ? AND user_id = ?";

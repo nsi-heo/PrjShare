@@ -1279,118 +1279,205 @@ $availableUsers = array_filter($allUsers, function($user) use ($groupManager, $g
                 <?php endif; ?>
             <?php endif; ?>
         </div>
+		
+		
+		<!-- Section Règlements - À ajouter dans group.php après la section des bilans -->
 
-        <!-- Section Règlements -->
-        <div class="section">
-            <h2>Qui doit quoi à qui ?</h2>
-            
-            <?php if($group['stay_mode_enabled']): ?>
-                <div class="tab-buttons">
-                    <button class="tab-btn active" onclick="showDebtTab('classique')">Règlements classiques</button>
-                    <button class="tab-btn" onclick="showDebtTab('sejour')">Règlements séjour</button>
+<?php
+// Calculer les règlements totaux (combinés)
+$combinedBalances = $expenseManager->calculateCombinedBalances($groupId);
+$combinedDebts = $expenseManager->calculateCombinedDebts($groupId);
+?>
+
+<!-- Section Règlements avec onglets -->
+<div class="section">
+    <h2>Qui doit quoi à qui ?</h2>
+    
+    <?php if($group['stay_mode_enabled']): ?>
+        <div class="tab-buttons">
+            <button class="tab-btn active" onclick="showDebtTab('classique')">Règlements classiques</button>
+            <button class="tab-btn" onclick="showDebtTab('sejour')">Règlements séjour</button>
+            <button class="tab-btn" onclick="showDebtTab('total')">Règlements TOTAUX</button>
+        </div>
+        
+        <!-- Règlements classiques -->
+        <div id="debt-classique" class="debt-tab-content">
+            <h3 style="margin-bottom: 1rem; color: #374151;">Mode classique</h3>
+            <?php if(empty($debts)): ?>
+                <div style="text-align: center; padding: 3rem; color: #6b7280;">
+                    <div style="font-size: 3rem; margin-bottom: 1rem;">✅</div>
+                    <h3 style="color: #059669;">Tous les comptes classiques sont équilibrés !</h3>
                 </div>
-                
-                <!-- Règlements classiques -->
-                <div id="debt-classique" class="debt-tab-content">
-                    <?php if(empty($debts)): ?>
-                        <div style="text-align: center; padding: 3rem; color: #6b7280;">
-                            <div style="font-size: 3rem; margin-bottom: 1rem;">✅</div>
-                            <h3 style="color: #059669;">Tous les comptes classiques sont équilibrés !</h3>
-                        </div>
-                    <?php else: ?>
-                        <div class="debts-list">
-                            <?php foreach($debts as $debt): ?>
-                                <div class="debt-card" style="background: linear-gradient(135deg, #fef3c7, #fed7aa); border: 1px solid #f59e0b; border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem;">
-                                    <div style="display: flex; justify-content: between; align-items: center; flex-wrap: wrap; gap: 1rem;">
-                                        <div style="flex: 1;">
-                                            <strong style="color: #92400e; font-size: 1.1rem;">
-                                                <?= htmlspecialchars($debt['from']) ?>
-                                            </strong>
-                                            <span style="color: #d97706; margin: 0 1rem;">doit</span>
-                                            <strong style="color: #92400e; font-size: 1.1rem;">
-                                                <?= htmlspecialchars($debt['to']) ?>
-                                            </strong>
-                                        </div>
-                                        <div style="font-size: 1.5rem; font-weight: bold; color: #92400e;">
-                                            <?= number_format($debt['amount'], 2) ?> €
-                                        </div>
-                                    </div>
-                                </div>
-                            <?php endforeach; ?>
-                        </div>
-                    <?php endif; ?>
-                </div>
-                
-                <!-- Règlements séjour -->
-                <div id="debt-sejour" class="debt-tab-content" style="display: none;">
-                    <?php if(empty($stayDebts)): ?>
-                        <div style="text-align: center; padding: 3rem; color: #6b7280;">
-                            <div style="font-size: 3rem; margin-bottom: 1rem;">✅</div>
-                            <h3 style="color: #059669;">Tous les comptes séjour sont équilibrés !</h3>
-                        </div>
-                    <?php else: ?>
-                        <div class="debts-list">
-                            <?php foreach($stayDebts as $debt): ?>
-                                <div class="debt-card" style="background: linear-gradient(135deg, #d1fae5, #a7f3d0); border: 1px solid #10b981; border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem;">
-                                    <div style="display: flex; justify-content: between; align-items: center; flex-wrap: wrap; gap: 1rem;">
-                                        <div style="flex: 1;">
-                                            <strong style="color: #065f46; font-size: 1.1rem;">
-                                                <?= htmlspecialchars($debt['from']) ?>
-                                            </strong>
-                                            <span style="color: #047857; margin: 0 1rem;">doit</span>
-                                            <strong style="color: #065f46; font-size: 1.1rem;">
-                                                <?= htmlspecialchars($debt['to']) ?>
-                                            </strong>
-                                            <span style="font-size: 0.875rem; color: #047857;">(séjour)</span>
-                                        </div>
-                                        <div style="font-size: 1.5rem; font-weight: bold; color: #065f46;">
-                                            <?= number_format($debt['amount'], 2) ?> €
-                                        </div>
-                                    </div>
-                                </div>
-                            <?php endforeach; ?>
-                        </div>
-                    <?php endif; ?>
-                </div>
-                
             <?php else: ?>
-                <!-- Règlements simples en mode classique uniquement -->
-                <?php if(empty($debts)): ?>
-                    <div style="text-align: center; padding: 3rem; color: #6b7280;">
-                        <div style="font-size: 3rem; margin-bottom: 1rem;">✅</div>
-                        <h3 style="color: #059669;">Tous les comptes sont équilibrés !</h3>
-                        <p>Personne ne doit d'argent à personne.</p>
-                    </div>
-                <?php else: ?>
-                    <div class="debts-list">
-                        <?php foreach($debts as $debt): ?>
-                            <div class="debt-card" style="background: linear-gradient(135deg, #fef3c7, #fed7aa); border: 1px solid #f59e0b; border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem;">
-                                <div style="display: flex; justify-content: between; align-items: center; flex-wrap: wrap; gap: 1rem;">
-                                    <div style="flex: 1;">
-                                        <strong style="color: #92400e; font-size: 1.1rem;">
-                                            <?= htmlspecialchars($debt['from']) ?>
-                                        </strong>
-                                        <span style="color: #d97706; margin: 0 1rem;">doit</span>
-                                        <strong style="color: #92400e; font-size: 1.1rem;">
-                                            <?= htmlspecialchars($debt['to']) ?>
-                                        </strong>
-                                    </div>
-                                    <div style="font-size: 1.5rem; font-weight: bold; color: #92400e;">
-                                        <?= number_format($debt['amount'], 2) ?> €
-                                    </div>
+                <div class="debts-list">
+                    <?php foreach($debts as $debt): ?>
+                        <div class="debt-card" style="background: linear-gradient(135deg, #fef3c7, #fed7aa); border: 1px solid #f59e0b; border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+                                <div style="flex: 1;">
+                                    <strong style="color: #92400e; font-size: 1.1rem;">
+                                        <?= htmlspecialchars($debt['from']) ?>
+                                    </strong>
+                                    <span style="color: #d97706; margin: 0 1rem;">doit</span>
+                                    <strong style="color: #92400e; font-size: 1.1rem;">
+                                        <?= htmlspecialchars($debt['to']) ?>
+                                    </strong>
+                                </div>
+                                <div style="font-size: 1.5rem; font-weight: bold; color: #92400e;">
+                                    <?= number_format($debt['amount'], 2) ?> €
+                                </div>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+        </div>
+        
+        <!-- Règlements séjour -->
+        <div id="debt-sejour" class="debt-tab-content" style="display: none;">
+            <h3 style="margin-bottom: 1rem; color: #374151;">Mode séjour</h3>
+            <?php if(empty($stayDebts)): ?>
+                <div style="text-align: center; padding: 3rem; color: #6b7280;">
+                    <div style="font-size: 3rem; margin-bottom: 1rem;">✅</div>
+                    <h3 style="color: #059669;">Tous les comptes séjour sont équilibrés !</h3>
+                </div>
+            <?php else: ?>
+                <div class="debts-list">
+                    <?php foreach($stayDebts as $debt): ?>
+                        <div class="debt-card" style="background: linear-gradient(135deg, #d1fae5, #a7f3d0); border: 1px solid #10b981; border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+                                <div style="flex: 1;">
+                                    <strong style="color: #065f46; font-size: 1.1rem;">
+                                        <?= htmlspecialchars($debt['from']) ?>
+                                    </strong>
+                                    <span style="color: #047857; margin: 0 1rem;">doit</span>
+                                    <strong style="color: #065f46; font-size: 1.1rem;">
+                                        <?= htmlspecialchars($debt['to']) ?>
+                                    </strong>
+                                    <span style="font-size: 0.875rem; color: #047857;">(séjour)</span>
+                                </div>
+                                <div style="font-size: 1.5rem; font-weight: bold; color: #065f46;">
+                                    <?= number_format($debt['amount'], 2) ?> €
+                                </div>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+        </div>
+        
+        <!-- NOUVEAU V4.3 : Règlements TOTAUX (combinés) -->
+        <div id="debt-total" class="debt-tab-content" style="display: none;">
+            <h3 style="margin-bottom: 1rem; color: #374151;">Règlements TOTAUX (Classique + Séjour)</h3>
+            <div style="background: #ede9fe; border: 2px solid #a78bfa; border-radius: 12px; padding: 1rem; margin-bottom: 1.5rem; color: #5b21b6;">
+                <strong>ℹ️ Info :</strong> Ces règlements combinent les dépenses en mode classique et en mode séjour pour un règlement global unique.
+            </div>
+            
+            <?php if(empty($combinedDebts)): ?>
+                <div style="text-align: center; padding: 3rem; color: #6b7280;">
+                    <div style="font-size: 3rem; margin-bottom: 1rem;">✅</div>
+                    <h3 style="color: #059669;">Tous les comptes sont équilibrés !</h3>
+                    <p>Personne ne doit d'argent à personne (classique + séjour).</p>
+                </div>
+            <?php else: ?>
+                <div class="debts-list">
+                    <?php foreach($combinedDebts as $debt): ?>
+                        <div class="debt-card" style="background: linear-gradient(135deg, #ede9fe, #ddd6fe); border: 2px solid #a78bfa; border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+                                <div style="flex: 1;">
+                                    <strong style="color: #5b21b6; font-size: 1.1rem;">
+                                        <?= htmlspecialchars($debt['from']) ?>
+                                    </strong>
+                                    <span style="color: #7c3aed; margin: 0 1rem;">doit</span>
+                                    <strong style="color: #5b21b6; font-size: 1.1rem;">
+                                        <?= htmlspecialchars($debt['to']) ?>
+                                    </strong>
+                                    <span style="font-size: 0.875rem; color: #7c3aed; font-weight: 600;">(TOTAL)</span>
+                                </div>
+                                <div style="font-size: 1.5rem; font-weight: bold; color: #5b21b6;">
+                                    <?= number_format($debt['amount'], 2) ?> €
+                                </div>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+                
+                <!-- Récapitulatif des bilans combinés -->
+                <div style="background: #f9fafb; border-radius: 12px; padding: 1.5rem; margin-top: 2rem;">
+                    <h4 style="color: #374151; margin-bottom: 1rem;">Récapitulatif des bilans totaux</h4>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem;">
+                        <?php foreach($combinedBalances as $person => $balance): ?>
+                            <div style="background: white; padding: 1rem; border-radius: 8px; border: 1px solid #e5e7eb;">
+                                <div style="font-weight: 600; color: #374151; margin-bottom: 0.5rem;">
+                                    <?= htmlspecialchars($person) ?>
+                                </div>
+                                <div style="font-size: 1.25rem; font-weight: bold; 
+                                            color: <?= $balance > 0 ? '#059669' : ($balance < 0 ? '#dc2626' : '#6b7280') ?>">
+                                    <?= $balance > 0 ? '+' : '' ?><?= number_format($balance, 2) ?> €
+                                </div>
+                                <div style="font-size: 0.875rem; color: #6b7280;">
+                                    <?php if($balance > 0.01): ?>
+                                        À recevoir
+                                    <?php elseif($balance < -0.01): ?>
+                                        À payer
+                                    <?php else: ?>
+                                        Équilibré
+                                    <?php endif; ?>
                                 </div>
                             </div>
                         <?php endforeach; ?>
                     </div>
-                <?php endif; ?>
+                </div>
             <?php endif; ?>
-            
-            <div style="background: #e0f2fe; border: 1px solid #0284c7; border-radius: 8px; padding: 1rem; margin-top: 1.5rem;">
-                <strong style="color: #0c4a6e;">💡 Conseil :</strong>
-                <span style="color: #0369a1;">Ces règlements permettent d'équilibrer tous les comptes avec le minimum de transactions.</span>
-            </div>
         </div>
+        
+    <?php else: ?>
+        <!-- Règlements simples en mode classique uniquement -->
+        <?php if(empty($debts)): ?>
+            <div style="text-align: center; padding: 3rem; color: #6b7280;">
+                <div style="font-size: 3rem; margin-bottom: 1rem;">✅</div>
+                <h3 style="color: #059669;">Tous les comptes sont équilibrés !</h3>
+                <p>Personne ne doit d'argent à personne.</p>
+            </div>
+        <?php else: ?>
+            <div class="debts-list">
+                <?php foreach($debts as $debt): ?>
+                    <div class="debt-card" style="background: linear-gradient(135deg, #fef3c7, #fed7aa); border: 1px solid #f59e0b; border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+                            <div style="flex: 1;">
+                                <strong style="color: #92400e; font-size: 1.1rem;">
+                                    <?= htmlspecialchars($debt['from']) ?>
+                                </strong>
+                                <span style="color: #d97706; margin: 0 1rem;">doit</span>
+                                <strong style="color: #92400e; font-size: 1.1rem;">
+                                    <?= htmlspecialchars($debt['to']) ?>
+                                </strong>
+                            </div>
+                            <div style="font-size: 1.5rem; font-weight: bold; color: #92400e;">
+                                <?= number_format($debt['amount'], 2) ?> €
+                            </div>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    <?php endif; ?>
+    
+    <div style="background: #e0f2fe; border: 1px solid #0284c7; border-radius: 8px; padding: 1rem; margin-top: 1.5rem;">
+        <strong style="color: #0c4a6e;">💡 Conseil :</strong>
+        <span style="color: #0369a1;">
+            Ces règlements permettent d'équilibrer tous les comptes avec le minimum de transactions.
+            <?php if($group['stay_mode_enabled']): ?>
+                L'onglet "Règlements TOTAUX" combine les deux modes pour un règlement global simplifié.
+            <?php endif; ?>
+        </span>
     </div>
+</div>
+
+
+		
+		
+
+
     
     <script>
         function toggleMemberFields() {
@@ -1472,27 +1559,29 @@ $availableUsers = array_filter($allUsers, function($user) use ($groupManager, $g
         
         // Gestion des onglets pour les dettes
         function showDebtTab(mode) {
-            // Retirer la classe active de tous les boutons d'onglets de dettes
-            //const debtSection = document.querySelector('.section h2').textContent.includes('doit') ? 
-            //    document.querySelector('.section h2').closest('.section') : null;
-			const debtSection = Array.from(document.querySelectorAll('.section')).find(section => section.querySelector('h2')?.textContent.includes('doit')) || null;
-            
-            if (debtSection) {
-                debtSection.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-                event.target.classList.add('active');
-                
-                // Masquer tous les contenus d'onglets
-                debtSection.querySelectorAll('.debt-tab-content').forEach(content => {
-                    content.style.display = 'none';
-                });
-                
-                // Afficher le contenu sélectionné
-                const targetContent = document.getElementById('debt-' + mode);
-                if (targetContent) {
-                    targetContent.style.display = 'block';
-                }
-            }
+    const debtSection = Array.from(document.querySelectorAll('.section')).find(section => 
+        section.querySelector('h2')?.textContent.includes('doit')
+    ) || null;
+    
+    if (debtSection) {
+        debtSection.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        event.target.classList.add('active');
+        
+        debtSection.querySelectorAll('.debt-tab-content').forEach(content => {
+            content.style.display = 'none';
+        });
+        
+        const targetContent = document.getElementById('debt-' + mode);
+        if (targetContent) {
+            targetContent.style.display = 'block';
         }
+    }
+}
+		
+		
+		
+		
+		
     </script>
 </body>
 </html>
