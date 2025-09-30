@@ -97,16 +97,38 @@ class Group {
                 return ['status' => 'error', 'message' => 'Demande introuvable'];
             }
             
+            // Vérifier si l'utilisateur est déjà membre
+            if ($this->isUserInGroup($request['group_id'], $request['user_id'])) {
+                // Mettre à jour la demande comme approuvée même si déjà membre
+                $updateQuery = "UPDATE group_join_requests SET status = 'approved', processed_at = NOW() WHERE id = ?";
+                $updateStmt = $this->conn->prepare($updateQuery);
+                $updateStmt->execute([$requestId]);
+                return ['status' => 'error', 'message' => 'Cet utilisateur est déjà membre du groupe'];
+            }
+            
+            // Vérifier si le nom existe déjà dans le groupe
+            $memberName = $request['username'];
+            if ($this->isMemberNameInGroup($request['group_id'], $memberName)) {
+                // Le nom existe déjà, proposer un nom alternatif
+                $counter = 2;
+                $originalName = $memberName;
+                while ($this->isMemberNameInGroup($request['group_id'], $memberName)) {
+                    $memberName = $originalName . '_' . $counter;
+                    $counter++;
+                }
+                // Utiliser le nom modifié
+            }
+            
             $this->conn->beginTransaction();
             
-            // Ajouter le membre au groupe
+            // Ajouter le membre au groupe avec le nom (éventuellement modifié)
             $addQuery = "INSERT INTO group_members (group_id, user_id, member_name, status) 
                         VALUES (?, ?, ?, 'active')";
             $addStmt = $this->conn->prepare($addQuery);
-            $addStmt->execute([$request['group_id'], $request['user_id'], $request['username']]);
+            $addStmt->execute([$request['group_id'], $request['user_id'], $memberName]);
             
             // Créer une période de séjour par défaut si nécessaire
-            $this->createDefaultStayPeriodForMember($request['group_id'], $request['username']);
+            $this->createDefaultStayPeriodForMember($request['group_id'], $memberName);
             
             // Mettre à jour le statut de la demande
             $updateQuery = "UPDATE group_join_requests SET status = 'approved', processed_at = NOW() WHERE id = ?";
@@ -119,7 +141,13 @@ class Group {
             $userStmt->execute([$request['user_id']]);
             
             $this->conn->commit();
-            return ['status' => 'success', 'message' => 'Demande approuvée avec succès'];
+            
+            $message = 'Demande approuvée avec succès';
+            if ($memberName !== $request['username']) {
+                $message .= '. Le membre a été ajouté sous le nom "' . $memberName . '" car le nom "' . $request['username'] . '" était déjà utilisé.';
+            }
+            
+            return ['status' => 'success', 'message' => $message];
         } catch(PDOException $e) {
             $this->conn->rollback();
             error_log("Erreur approbation demande: " . $e->getMessage());
@@ -499,22 +527,23 @@ class Group {
     
     public function addMemberToGroupWithConflictCheck($groupId, $memberName, $userId = null) {
         try {
-            if($userId !== null) {
-                if($this->hasUnlinkedMemberWithName($groupId, $memberName)) {
+            // Vérifier d'abord si le nom existe déjà dans le groupe (prioritaire)
+            if($this->isMemberNameInGroup($groupId, $memberName)) {
+                if($userId !== null) {
+                    // Un utilisateur essaie de rejoindre avec un nom déjà pris
                     return ['status' => 'conflict', 'action' => 'link_existing'];
-                }
-                
-                if($this->isUserInGroup($groupId, $userId)) {
-                    return ['status' => 'error', 'message' => 'Cet utilisateur est déjà membre du groupe'];
-                }
-            }
-            
-            if($userId === null) {
-                if($this->isMemberNameInGroup($groupId, $memberName)) {
+                } else {
+                    // Tentative d'ajout d'un nom déjà existant
                     return ['status' => 'error', 'message' => 'Ce nom est déjà utilisé dans ce groupe'];
                 }
             }
             
+            // Vérifier si l'utilisateur est déjà membre du groupe
+            if($userId !== null && $this->isUserInGroup($groupId, $userId)) {
+                return ['status' => 'error', 'message' => 'Cet utilisateur est déjà membre du groupe'];
+            }
+            
+            // Tout est OK, ajouter le membre
             if($this->addMemberToGroup($groupId, $memberName, $userId)) {
                 return ['status' => 'success', 'message' => 'Membre ajouté avec succès'];
             } else {

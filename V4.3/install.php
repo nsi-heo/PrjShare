@@ -45,6 +45,7 @@ $queries = [
         joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (group_id) REFERENCES groups_table(id) ON DELETE CASCADE,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+        UNIQUE KEY unique_member_per_group (group_id, member_name),
         INDEX idx_group_member (group_id, member_name)
     )",
     
@@ -135,7 +136,12 @@ $migrationQueries = [
     // Ajouter la contrainte de clé étrangère pour modified_by
     "ALTER TABLE expenses 
      ADD CONSTRAINT IF NOT EXISTS fk_expenses_modified_by 
-     FOREIGN KEY (modified_by) REFERENCES users(id) ON DELETE SET NULL"
+     FOREIGN KEY (modified_by) REFERENCES users(id) ON DELETE SET NULL",
+     
+    // NOUVEAU V4.3 : Ajouter la contrainte d'unicité pour les noms de membres
+    "ALTER TABLE group_members 
+     ADD CONSTRAINT IF NOT EXISTS unique_member_per_group 
+     UNIQUE (group_id, member_name)"
 ];
 
 echo "<h1>🚀 Installation Shareman v4.3</h1>";
