@@ -11,13 +11,11 @@ class Expense {
         $this->conn->beginTransaction();
         
         try {
-											   
             $query = "INSERT INTO expenses (group_id, title, amount, paid_by, created_by, expense_mode) VALUES (?, ?, ?, ?, ?, ?)";
             $stmt = $this->conn->prepare($query);
             $stmt->execute([$groupId, $title, $amount, $paidBy, $createdBy, $mode]);
             $expenseId = $this->conn->lastInsertId();
             
-																	   
             $query = "INSERT INTO expense_participants (expense_id, member_name, share) VALUES (?, ?, ?)";
             $stmt = $this->conn->prepare($query);
             
@@ -50,7 +48,6 @@ class Expense {
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
     
-												   
     public function getGroupExpensesByMode($groupId, $mode = null) {
         if ($mode) {
             $query = "SELECT e.*, 
@@ -83,7 +80,6 @@ class Expense {
         return $stmt->execute([$expenseId]);
     }
     
-													
     public function calculateStayBalances($groupId) {
         try {
             require_once 'classes/Group.php';
@@ -94,7 +90,6 @@ class Expense {
                 return [];
             }
             
-														
             $stayExpenses = $this->getGroupExpensesByMode($groupId, 'sejour');
             $stayPeriods = $groupManager->getMemberStayPeriods($groupId);
             
@@ -102,18 +97,15 @@ class Expense {
                 return [];
             }
             
-													 
             $totalStayExpenses = 0;
             foreach ($stayExpenses as $expense) {
                 $totalStayExpenses += $expense['amount'];
             }
             
-															   
             $groupStartDate = new DateTime($group['stay_start_date']);
             $groupEndDate = new DateTime($group['stay_end_date']);
             $totalGroupDays = $groupEndDate->diff($groupStartDate)->days + 1;
             
-																	 
             $totalCoefficients = 0;
             foreach ($stayPeriods as $period) {
                 $totalCoefficients += $period['coefficient'];
@@ -123,10 +115,8 @@ class Expense {
                 return [];
             }
             
-														 
             $costPerDayPerCoefficient = $totalStayExpenses / $totalGroupDays / $totalCoefficients;
             
-												
             $balances = [];
             foreach ($stayPeriods as $period) {
                 $memberStartDate = new DateTime($period['start_date']);
@@ -137,7 +127,6 @@ class Expense {
                 $balances[$period['member_name']] = -$memberShare;
             }
             
-													 
             foreach ($stayExpenses as $expense) {
                 if (!isset($balances[$expense['paid_by']])) {
                     $balances[$expense['paid_by']] = 0;
@@ -154,22 +143,18 @@ class Expense {
     }
     
     public function calculateBalances($groupId) {
-																
         $expenses = $this->getGroupExpensesByMode($groupId, 'classique');
         $balances = [];
         
         foreach($expenses as $expense) {
             $participants = $this->getExpenseParticipants($expense['id']);
             
-													  
             if(!isset($balances[$expense['paid_by']])) {
                 $balances[$expense['paid_by']] = 0;
             }
             
-											 
             $balances[$expense['paid_by']] += $expense['amount'];
             
-											 
             foreach($participants as $participant) {
                 if(!isset($balances[$participant['member_name']])) {
                     $balances[$participant['member_name']] = 0;
@@ -203,7 +188,6 @@ class Expense {
         return $combinedBalances;
     }
     
-													
     public function calculateStayDebts($groupId) {
         $balances = $this->calculateStayBalances($groupId);
         return $this->calculateDebtsFromBalances($balances);
@@ -234,7 +218,6 @@ class Expense {
             }
         }
         
-										   
         foreach($debtors as $debtor => $debt) {
             foreach($creditors as $creditor => $credit) {
                 if($debt <= 0 || $credit <= 0) continue;
@@ -256,51 +239,10 @@ class Expense {
         return $debts;
     }
     
-																						
-										
-		
-			 
-													
-																						   
-												 
-																   
-			
-												 
-																				   
-															 
-											   
-			
-												
-																												
-															 
-			
-															 
-													
-																				  
-			 
-			
-								  
-						
-							   
-									
-						 
-		 
-	 
-	
-												
-																		 
-														   
-								  
-											 
-									 
-											  
-	 
-	
     public function updateExpenseWithModifier($expenseId, $title, $amount, $paidBy, $participants, $modifiedBy, $mode = null) {
         $this->conn->beginTransaction();
         
         try {
-																		
             if ($mode !== null) {
                 $query = "UPDATE expenses SET title = ?, amount = ?, paid_by = ?, expense_mode = ?, modified_by = ?, modified_at = NOW() WHERE id = ?";
                 $stmt = $this->conn->prepare($query);
@@ -311,12 +253,10 @@ class Expense {
                 $stmt->execute([$title, $amount, $paidBy, $modifiedBy, $expenseId]);
             }
             
-												 
             $deleteQuery = "DELETE FROM expense_participants WHERE expense_id = ?";
             $deleteStmt = $this->conn->prepare($deleteQuery);
             $deleteStmt->execute([$expenseId]);
             
-												
             $insertQuery = "INSERT INTO expense_participants (expense_id, member_name, share) VALUES (?, ?, ?)";
             $insertStmt = $this->conn->prepare($insertQuery);
             

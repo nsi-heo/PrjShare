@@ -49,7 +49,7 @@ class Group {
             return ['status' => 'error', 'message' => 'Erreur lors de l\'envoi de la demande'];
         } catch(PDOException $e) {
             error_log("Erreur création demande intégration: " . $e->getMessage());
-            return ['status' => 'error', 'message' => 'Erreur système'];
+            return ['status' => 'error', 'message' => 'Erreur système1'];
         }
     }
     
@@ -151,7 +151,7 @@ class Group {
         } catch(PDOException $e) {
             $this->conn->rollback();
             error_log("Erreur approbation demande: " . $e->getMessage());
-            return ['status' => 'error', 'message' => 'Erreur système'];
+            return ['status' => 'error', 'message' => 'Erreur système2'];
         }
     }
     
@@ -167,7 +167,7 @@ class Group {
             return ['status' => 'error', 'message' => 'Erreur lors du rejet'];
         } catch(PDOException $e) {
             error_log("Erreur rejet demande: " . $e->getMessage());
-            return ['status' => 'error', 'message' => 'Erreur système'];
+            return ['status' => 'error', 'message' => 'Erreur système3'];
         }
     }
     
@@ -237,7 +237,7 @@ class Group {
             return ['status' => 'error', 'message' => 'Erreur lors de la configuration'];
         } catch(PDOException $e) {
             error_log("Erreur configuration séjour: " . $e->getMessage());
-            return ['status' => 'error', 'message' => 'Erreur système'];
+            return ['status' => 'error', 'message' => 'Erreur système4'];
         }
     }
     
@@ -290,7 +290,7 @@ class Group {
             
         } catch(PDOException $e) {
             error_log("Erreur mise à jour période séjour: " . $e->getMessage());
-            return ['status' => 'error', 'message' => 'Erreur système'];
+            return ['status' => 'error', 'message' => 'Erreur système5'];
         }
     }
     
@@ -310,13 +310,24 @@ class Group {
         try {
             $group = $this->getGroupById($groupId);
             if ($group && $group['stay_mode_enabled']) {
-                $query = "INSERT INTO member_stay_periods (group_id, member_name, start_date, end_date, coefficient) 
-                         VALUES (?, ?, ?, ?, 1.00)";
-                $stmt = $this->conn->prepare($query);
-                $stmt->execute([$groupId, $memberName, $group['stay_start_date'], $group['stay_end_date']]);
+                // Vérifier si une période existe déjà
+                $checkQuery = "SELECT COUNT(*) FROM member_stay_periods WHERE group_id = ? AND member_name = ?";
+                $checkStmt = $this->conn->prepare($checkQuery);
+                $checkStmt->execute([$groupId, $memberName]);
+                
+                if ($checkStmt->fetchColumn() == 0) {
+                    // Créer la période seulement si elle n'existe pas
+                    $query = "INSERT INTO member_stay_periods (group_id, member_name, start_date, end_date, coefficient) 
+                             VALUES (?, ?, ?, ?, 1.00)";
+                    $stmt = $this->conn->prepare($query);
+                    $stmt->execute([$groupId, $memberName, $group['stay_start_date'], $group['stay_end_date']]);
+                    return true;
+                }
             }
+            return false;
         } catch(PDOException $e) {
             error_log("Erreur création période par défaut: " . $e->getMessage());
+            return false;
         }
     }
     
@@ -337,7 +348,7 @@ class Group {
             return ['status' => 'error', 'message' => 'Erreur lors de la désactivation'];
         } catch(PDOException $e) {
             error_log("Erreur désactivation séjour: " . $e->getMessage());
-            return ['status' => 'error', 'message' => 'Erreur système'];
+            return ['status' => 'error', 'message' => 'Erreur système6'];
         }
     }
     
@@ -373,7 +384,22 @@ class Group {
             $stmt = $this->conn->prepare($query);
             
             if ($stmt->execute([$groupId, $userId, $memberName])) {
-                $this->createDefaultStayPeriodForMember($groupId, $memberName);
+                // IMPORTANT : Créer automatiquement la période de séjour si mode activé
+                $group = $this->getGroupById($groupId);
+                if ($group && $group['stay_mode_enabled']) {
+                    // Vérifier si la période existe déjà
+                    $checkQuery = "SELECT COUNT(*) FROM member_stay_periods WHERE group_id = ? AND member_name = ?";
+                    $checkStmt = $this->conn->prepare($checkQuery);
+                    $checkStmt->execute([$groupId, $memberName]);
+                    
+                    if ($checkStmt->fetchColumn() == 0) {
+                        // Créer la période
+                        $insertQuery = "INSERT INTO member_stay_periods (group_id, member_name, start_date, end_date, coefficient) 
+                                       VALUES (?, ?, ?, ?, 1.00)";
+                        $insertStmt = $this->conn->prepare($insertQuery);
+                        $insertStmt->execute([$groupId, $memberName, $group['stay_start_date'], $group['stay_end_date']]);
+                    }
+                }
                 return true;
             }
             return false;
@@ -552,7 +578,7 @@ class Group {
             
         } catch(Exception $e) {
             error_log("Erreur ajout membre avec vérification: " . $e->getMessage());
-            return ['status' => 'error', 'message' => 'Erreur système'];
+            return ['status' => 'error', 'message' => 'Erreur système7'];
         }
     }
 }

@@ -95,86 +95,162 @@ if($_POST) {
         }
     }
     
-    if($action === 'add_member' && getUserStatus() !== 'visiteur') {
-        $memberType = $_POST['member_type'] ?? '';
-        $memberName = '';
-        $userId = null;
+// Section à remplacer dans group.php - Traitement formulaire add_member
+
+if($action === 'add_member' && getUserStatus() !== 'visiteur') {
+    $memberType = $_POST['member_type'] ?? '';
+    $memberName = '';
+    $userId = null;
+    
+    if($memberType === 'existing_user') {
+        $userId = $_POST['existing_user_id'];
+        $userData = $userManager->getUserById($userId);
         
-        if($memberType === 'existing_user') {
-            $userId = $_POST['existing_user_id'];
-            $userData = $userManager->getUserById($userId);
+        if($userData) {
+            $memberName = $userData['username'];
             
-            if($userData) {
-                $memberName = $userData['username'];
-                
-                $result = $groupManager->addMemberToGroupWithConflictCheck($groupId, $memberName, $userId);
-                
-                switch($result['status']) {
-                    case 'success':
-                        $success = $result['message'];
-                        break;
-                    case 'error':
-                        $error = $result['message'];
-                        break;
-                    case 'conflict':
-                        $showLinkDialog = true;
-                        $conflictData = [
-                            'user_id' => $userId,
-                            'username' => $memberName,
-                            'existing_member' => $groupManager->getUnlinkedMemberByName($groupId, $memberName)
-                        ];
-                        break;
-                }
-            } else {
-                $error = "Utilisateur introuvable";
-            }
+            $result = $groupManager->addMemberToGroupWithConflictCheck($groupId, $memberName, $userId);
             
-        } else if($memberType === 'new_member') {
-            $memberName = trim($_POST['new_member_name']);
-            
-            if(empty($memberName)) {
-                $error = "Le nom du membre est requis";
-            } else {
-                $result = $groupManager->addMemberToGroupWithConflictCheck($groupId, $memberName, null);
-                
-                if($result['status'] === 'success') {
-                    $success = $result['message'] . " Il pourra créer un compte avec ce nom plus tard.";
-                } else {
+            switch($result['status']) {
+                case 'success':
+                    $success = $result['message'];
+                    
+                    // IMPORTANT : Créer la période de séjour si mode activé
+                    if($group['stay_mode_enabled']) {
+                        $periodCreated = $groupManager->createDefaultStayPeriodForMember($groupId, $memberName);
+                        if($periodCreated) {
+                            $success .= " Une période de séjour par défaut a été créée du " . 
+                                       date('d/m/Y', strtotime($group['stay_start_date'])) . 
+                                       " au " . date('d/m/Y', strtotime($group['stay_end_date'])) . 
+                                       " avec un coefficient de 1.00.";
+                        } else {
+                            $success .= " Attention : La période de séjour n'a pas pu être créée automatiquement. Veuillez la créer manuellement dans la section Mode Séjour.";
+                        }
+                    }
+                    
+                    // Recharger les données du groupe pour afficher les changements
+                    $group = $groupManager->getGroupById($groupId);
+                    $members = $groupManager->getGroupMembers($groupId);
+                    $stayPeriods = $groupManager->getMemberStayPeriods($groupId);
+                    $stayBalances = $expenseManager->calculateStayBalances($groupId);
+                    $stayDebts = $expenseManager->calculateStayDebts($groupId);
+                    break;
+                    
+                case 'error':
                     $error = $result['message'];
+                    break;
+                    
+                case 'conflict':
+                    $showLinkDialog = true;
+                    $conflictData = [
+                        'user_id' => $userId,
+                        'username' => $memberName,
+                        'existing_member' => $groupManager->getUnlinkedMemberByName($groupId, $memberName)
+                    ];
+                    break;
+            }
+        } else {
+            $error = "Utilisateur introuvable";
+        }
+        
+    } else if($memberType === 'new_member') {
+        $memberName = trim($_POST['new_member_name']);
+        
+        if(empty($memberName)) {
+            $error = "Le nom du membre est requis";
+        } else {
+            $result = $groupManager->addMemberToGroupWithConflictCheck($groupId, $memberName, null);
+            
+            if($result['status'] === 'success') {
+                $success = $result['message'] . " Il pourra créer un compte avec ce nom plus tard.";
+                
+                // IMPORTANT : Créer la période de séjour si mode activé
+                if($group['stay_mode_enabled']) {
+                    $periodCreated = $groupManager->createDefaultStayPeriodForMember($groupId, $memberName);
+                    if($periodCreated) {
+                        $success .= " Une période de séjour par défaut a été créée du " . 
+                                   date('d/m/Y', strtotime($group['stay_start_date'])) . 
+                                   " au " . date('d/m/Y', strtotime($group['stay_end_date'])) . 
+                                   " avec un coefficient de 1.00.";
+                    } else {
+                        $success .= " Attention : La période de séjour n'a pas pu être créée automatiquement. Veuillez la créer manuellement dans la section Mode Séjour.";
+                    }
                 }
+                
+                // Recharger les données du groupe pour afficher les changements
+                $group = $groupManager->getGroupById($groupId);
+                $members = $groupManager->getGroupMembers($groupId);
+                $stayPeriods = $groupManager->getMemberStayPeriods($groupId);
+                $stayBalances = $expenseManager->calculateStayBalances($groupId);
+                $stayDebts = $expenseManager->calculateStayDebts($groupId);
+            } else {
+                $error = $result['message'];
             }
         }
     }
+}
+
+// IMPORTANT : Action de liaison membre existant
+if($action === 'link_member' && getUserStatus() !== 'visiteur') {
+    $userId = $_POST['user_id'];
+    $memberName = $_POST['member_name'];
     
-    if($action === 'link_member' && getUserStatus() !== 'visiteur') {
-        $userId = $_POST['user_id'];
-        $memberName = $_POST['member_name'];
+    if($groupManager->linkMemberToUser($groupId, $memberName, $userId)) {
+        $success = "Le membre existant a été lié au compte utilisateur avec succès !";
         
-        if($groupManager->linkMemberToUser($groupId, $memberName, $userId)) {
-            $success = "Le membre existant a été lié au compte utilisateur avec succès !";
-        } else {
-            $error = "Erreur lors de la liaison du membre";
+        // Vérifier si période de séjour existe, sinon la créer
+        if($group['stay_mode_enabled']) {
+            $periodCreated = $groupManager->createDefaultStayPeriodForMember($groupId, $memberName);
+            if($periodCreated) {
+                $success .= " Une période de séjour a été créée automatiquement.";
+            }
         }
+        
+        // Recharger les données
+        $group = $groupManager->getGroupById($groupId);
+        $members = $groupManager->getGroupMembers($groupId);
+        $stayPeriods = $groupManager->getMemberStayPeriods($groupId);
+        $stayBalances = $expenseManager->calculateStayBalances($groupId);
+        $stayDebts = $expenseManager->calculateStayDebts($groupId);
+    } else {
+        $error = "Erreur lors de la liaison du membre";
+    }
+}
+
+// IMPORTANT : Action ajout comme nouveau membre (conflit)
+if($action === 'add_as_new' && getUserStatus() !== 'visiteur') {
+    $userId = $_POST['user_id'];
+    $memberName = $_POST['member_name'];
+    
+    $newMemberName = $memberName . " (utilisateur)";
+    $counter = 2;
+    
+    while($groupManager->isMemberNameInGroup($groupId, $newMemberName)) {
+        $newMemberName = $memberName . " (utilisateur " . $counter . ")";
+        $counter++;
     }
     
-    if($action === 'add_as_new' && getUserStatus() !== 'visiteur') {
-        $userId = $_POST['user_id'];
-        $memberName = $_POST['member_name'];
+    if($groupManager->addMemberToGroup($groupId, $newMemberName, $userId)) {
+        $success = "L'utilisateur a été ajouté avec le nom \"" . $newMemberName . "\" pour éviter la confusion.";
         
-        $newMemberName = $memberName . " (utilisateur)";
-        $counter = 2;
-        
-        while($groupManager->isMemberNameInGroup($groupId, $newMemberName)) {
-            $newMemberName = $memberName . " (utilisateur " . $counter . ")";
-            $counter++;
+        // Créer période de séjour si nécessaire
+        if($group['stay_mode_enabled']) {
+            $periodCreated = $groupManager->createDefaultStayPeriodForMember($groupId, $newMemberName);
+            if($periodCreated) {
+                $success .= " Une période de séjour a été créée automatiquement.";
+            }
         }
         
-        if($groupManager->addMemberToGroup($groupId, $newMemberName, $userId)) {
-            $success = "L'utilisateur a été ajouté avec le nom \"" . $newMemberName . "\" pour éviter la confusion.";
-        } else {
-            $error = "Erreur lors de l'ajout du membre";
-        }
+        // Recharger les données
+        $group = $groupManager->getGroupById($groupId);
+        $members = $groupManager->getGroupMembers($groupId);
+        $stayPeriods = $groupManager->getMemberStayPeriods($groupId);
+        $stayBalances = $expenseManager->calculateStayBalances($groupId);
+        $stayDebts = $expenseManager->calculateStayDebts($groupId);
+    } else {
+        $error = "Erreur lors de l'ajout du membre";
     }
+}
     
     if($action === 'remove_member' && isAdmin()) {
         $memberId = $_POST['member_id'];
