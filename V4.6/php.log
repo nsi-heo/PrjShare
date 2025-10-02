@@ -1,0 +1,19 @@
+[01-Oct-2025 19:36:11 Europe/Paris] PHP Fatal error:  Uncaught PDOException: SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'manucado@free.fr' for key 'unique_email' in /home/shareman/www/classes/User.php:25
+Stack trace:
+#0 /home/shareman/www/classes/User.php(25): PDOStatement->execute(Array)
+#1 /home/shareman/www/index.php(54): User->register('tutu', 'manucado@free.f...', 'Dillon1')
+#2 {main}
+  thrown in /home/shareman/www/classes/User.php on line 25
+[01-Oct-2025 19:37:26 Europe/Paris] PHP Warning:  Trying to access array offset on value of type bool in /home/shareman/www/index.php on line 56
+[01-Oct-2025 19:37:58 Europe/Paris] PHP Fatal error:  Uncaught PDOException: SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'tutu' for key 'username' in /home/shareman/www/classes/User.php:25
+Stack trace:
+#0 /home/shareman/www/classes/User.php(25): PDOStatement->execute(Array)
+#1 /home/shareman/www/index.php(54): User->register('tutu', 'gingseng.energy...', 'Dillon1')
+#2 {main}
+  thrown in /home/shareman/www/classes/User.php on line 25
+[01-Oct-2025 20:12:41 Europe/Paris] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'must_change_password' in 'SELECT' in /home/shareman/www/classes/User.php:15
+Stack trace:
+#0 /home/shareman/www/classes/User.php(15): PDOStatement->execute(Array)
+#1 /home/shareman/www/index.php(31): User->login('manolo', 'Emagat')
+#2 {main}
+  thrown in /home/shareman/www/classes/User.php on line 15
